@@ -37,6 +37,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# FilterConfig is imported lazily to avoid circular dependencies;
+# the TYPE_CHECKING guard keeps mypy happy without a runtime import loop.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from filter_engine import FilterConfig
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Sub-Konfigurationen
@@ -181,6 +187,9 @@ class SearchGroupConfig:
     providers: Dict[str, ProviderChannels] = field(default_factory=dict)
     schedule: SearchGroupSchedule = field(default_factory=SearchGroupSchedule)
     enabled: bool = True
+    # Phase 3: optionale Filterregeln; None = kein Filter (alles durchlassen)
+    # Typ ist Dict[str, Any] zur Laufzeit (FilterConfig beim Import vermeiden)
+    filters: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, group_id: str, d: Dict[str, Any]) -> "SearchGroupConfig":
@@ -198,6 +207,7 @@ class SearchGroupConfig:
             providers=providers,
             schedule=SearchGroupSchedule.from_dict(schedule_d),
             enabled=bool(d.get("enabled", True)),
+            filters=d.get("filters"),  # Raw dict — FilterEngine liest es selbst
         )
 
     def validate(self) -> List[str]:
