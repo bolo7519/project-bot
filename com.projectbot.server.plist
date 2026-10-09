@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent für project-bot server_enhanced.py
+  Datei: ~/Library/LaunchAgents/com.projectbot.server.plist
+
+  ANPASSEN VOR DEM INSTALLIEREN:
+    1. Ersetze /Users/DEINNAME/Projects/project-bot mit deinem tatsächlichen Pfad
+    2. Ersetze /Users/DEINNAME/.local/share/virtualenvs/... mit deinem venv-Pfad
+       (oder nutze `which python3` in deiner Shell um den richtigen Pfad zu finden)
+
+  INSTALLIEREN:
+    Pfad anpassen, dann:
+      cp com.projectbot.server.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.projectbot.server.plist
+
+  ENTFERNEN:
+      launchctl unload ~/Library/LaunchAgents/com.projectbot.server.plist
+      rm ~/Library/LaunchAgents/com.projectbot.server.plist
+
+  LOGS:
+      tail -f /tmp/projectbot-server.log
+      tail -f /tmp/projectbot-server-error.log
+-->
+<plist version="1.0">
+<dict>
+    <!-- Dienst-Bezeichner (eindeutig, keine Umlaute) -->
+    <key>Label</key>
+    <string>com.projectbot.server</string>
+
+    <!-- ANPASSEN: python3 aus dem venv oder System -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/DEINNAME/Projects/project-bot/venv/bin/python3</string>
+        <string>server_enhanced.py</string>
+    </array>
+
+    <!-- ANPASSEN: Projektverzeichnis -->
+    <key>WorkingDirectory</key>
+    <string>/Users/DEINNAME/Projects/project-bot</string>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/tmp/projectbot-server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/projectbot-server-error.log</string>
+
+    <!-- Beim Login starten -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Bei Absturz neu starten (nach 10 Sekunden) -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Umgebungsvariablen (optional, falls .env nicht automatisch gelesen wird) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>FLASK_HOST</key>
+        <string>127.0.0.1</string>
+        <key>FLASK_PORT</key>
+        <string>8002</string>
+        <key>FLASK_DEBUG</key>
+        <string>0</string>
+    </dict>
+</dict>
+</plist>
