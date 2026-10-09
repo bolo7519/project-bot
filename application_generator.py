@@ -22,12 +22,10 @@ import google.generativeai as genai
 from state_manager import ProjectStateManager
 
 # Import LangChain components
-try:
-    from langchain.prompts import PromptTemplate
-    from langchain.chains import LLMChain
-    from langchain_openai import ChatOpenAI
-except ImportError:
-    from langchain.chat_models import ChatOpenAI
+# Phase 0 fix: langchain.prompts, langchain.chains, langchain.chat_models were
+# removed in LangChain 1.x. Use langchain_core and langchain_openai instead.
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
 
 try:
     from langchain_anthropic import ChatAnthropic
@@ -116,8 +114,8 @@ class ApplicationGenerator:
         # Initialize LLM
         self.chat = self._initialize_llm()
 
-        # Create LLM chain
-        self.chain = LLMChain(llm=self.chat, prompt=self.prompt, verbose=True)
+        # Create LLM chain using LCEL (Phase 0: LLMChain removed in LangChain 1.x)
+        self.chain = self.prompt | self.chat
 
     def _validate_config(self) -> None:
         """
@@ -436,7 +434,7 @@ Gehaltsvorstellung: 120,- € pro Stunde
             Tuple of (application_text, tokens_used, cost)
         """
         # Calculate input tokens and cost
-        input_text = self.chain.prompt.template.format(
+        input_text = self.prompt.template.format(
             skills=skills,
             project_requirements=project_requirements
         )
@@ -445,27 +443,25 @@ Gehaltsvorstellung: 120,- € pro Stunde
         print(f"Content length of the chain in tokens: {input_tokens}")
         print(f"Cost for {input_tokens} tokens: ${input_cost:.4f}")
 
-        # Generate the application
-        response = self.chain.generate([{
+        # Generate the application (Phase 0: chain.generate() → chain.invoke() via LCEL)
+        response = self.chain.invoke({
             "skills": skills,
             "project_requirements": project_requirements
-        }])
+        })
 
-        # Extract the generated text
-        application_text = response.generations[0][0].text
+        # Extract the generated text (LCEL invoke returns AIMessage)
+        application_text = response.content
 
-        # Extract token usage from response (different providers have different structures)
+        # Extract token usage from response metadata
         tokens_used = 0
-        if response.llm_output and "token_usage" in response.llm_output:
-            # OpenAI style
-            tokens_used = response.llm_output["token_usage"]["total_tokens"]
-        elif response.llm_output and "usage_metadata" in response.llm_output:
-            # Anthropic style
-            usage = response.llm_output["usage_metadata"]
-            tokens_used = usage.get("total_tokens", usage.get("input_tokens", 0) + usage.get("output_tokens", 0))
+        usage_meta = getattr(response, "usage_metadata", None)
+        if usage_meta:
+            # langchain_core AIMessage carries usage_metadata dict
+            tokens_used = usage_meta.get("total_tokens",
+                          usage_meta.get("input_tokens", 0) + usage_meta.get("output_tokens", 0))
         else:
             # Fallback: estimate from text length
-            tokens_used = len(application_text.split()) * 1.3  # rough estimation
+            tokens_used = int(len(application_text.split()) * 1.3)
 
         cost = self.calculate_cost(tokens_used)
 
