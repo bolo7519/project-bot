@@ -1598,6 +1598,7 @@ class EmailAgent:
             'entries_found': 0,
             'projects_saved': 0,
             'urls_skipped_dedupe': 0,
+            'projects_filtered': 0,
             'errors': 0,
             'provider_summaries': {},
         }
@@ -2000,7 +2001,10 @@ def run_rss_ingestion_for_search_groups(
     Returns:
         Summary dict keyed by group_id.
     """
-    from search_group_config import load_search_groups
+    from search_group_config import apply_default_topic_filters, load_search_groups
+
+    # Fachliche Einschlusskriterien je Gruppe ergänzen (search_group_filters.yaml)
+    config = apply_default_topic_filters(config)
 
     agent = EmailAgent(config)
     groups = load_search_groups(config)
@@ -2011,6 +2015,7 @@ def run_rss_ingestion_for_search_groups(
         'total_entries_found': 0,
         'total_projects_saved': 0,
         'total_urls_skipped_dedupe': 0,
+        'total_projects_filtered': 0,
         'total_errors': 0,
         'group_summaries': {},
     }
@@ -2027,6 +2032,7 @@ def run_rss_ingestion_for_search_groups(
         total_summary['total_entries_found'] += summary.get('entries_found', 0)
         total_summary['total_projects_saved'] += summary.get('projects_saved', 0)
         total_summary['total_urls_skipped_dedupe'] += summary.get('urls_skipped_dedupe', 0)
+        total_summary['total_projects_filtered'] += summary.get('projects_filtered', 0)
         total_summary['total_errors'] += summary.get('errors', 0)
 
     return total_summary
@@ -2050,7 +2056,10 @@ def run_full_workflow_for_search_groups(
     Returns:
         Aggregated summary with rss_summary and email_summary per group.
     """
-    from search_group_config import load_search_groups
+    from search_group_config import apply_default_topic_filters, load_search_groups
+
+    # Fachliche Einschlusskriterien je Gruppe ergänzen (search_group_filters.yaml)
+    config = apply_default_topic_filters(config)
 
     agent = EmailAgent(config)
     groups = load_search_groups(config)

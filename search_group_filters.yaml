@@ -1,0 +1,176 @@
+# search_group_filters.yaml
+#
+# Fachliche Einschlusskriterien je Suchgruppe (versioniert, kein Geheimnis).
+#
+# Hintergrund: Beide Suchgruppen lesen denselben, ungefilterten
+# FreelancerMap-Feed. Ohne diese Begriffe gilt jeder Feed-Eintrag als Treffer
+# jeder Gruppe. Ein Projekt gehört nur dann zu einer Gruppe, wenn mindestens
+# `include_min_matches` Begriffe in Titel, Beschreibung oder Schlagworten
+# vorkommen. Passt es zu beiden Gruppen, wird es beiden zugeordnet (eine Datei).
+#
+# Diese Datei liefert die Standardwerte. Wer sie für eine Gruppe überschreiben
+# will, setzt in config.yaml `search_groups.<id>.filters.include_terms`
+# (eine leere Liste schaltet die fachliche Filterung dieser Gruppe ab).
+#
+# Schreibweise der Begriffe:
+#   - Plaintext, Groß-/Kleinschreibung egal, nur ganze Wörter
+#   - Leerzeichen und Bindestrich sind austauschbar: "Power BI" trifft auch
+#     "PowerBI" und "Power-BI"
+#   - "*" am Ende erlaubt Wortfortsetzungen: "Firewall*" trifft "Firewalls"
+#   - Bewusst keine allgemeinen Einzelwörter wie "Make", "API", "Workflow",
+#     "Netzwerk", "Infrastruktur", "Security", "Reporting" oder "KI" — sie
+#     stehen in fast jeder Ausschreibung und erzeugen Fehltreffer.
+#
+# Die vier Kompetenzprofile (competency_profiles/) sind davon unabhängig:
+# Jedes Projekt, das hier mindestens eine Gruppe passiert, wird gegen alle
+# vier Profile bewertet.
+
+search_group_filters:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gruppe A: CRM, Sales Automation, Make.com/Integromat, API-Integration,
+  # Workflow-Automatisierung, KI-Prozessintegration, Power BI, SharePoint
+  # ───────────────────────────────────────────────────────────────────────────
+  automation_bi:
+    include_min_matches: 1
+    include_terms:
+      # CRM & Sales Automation
+      - "CRM"
+      - "Salesforce"
+      - "HubSpot"
+      - "Pipedrive"
+      - "Zoho CRM"
+      - "Dynamics 365"
+      - "Dynamics CRM"
+      - "Sales Automation"
+      - "Vertriebsautomatisierung"
+      - "Marketing Automation"
+      - "Lead-Management"
+      # Make.com / Integromat und vergleichbare Integrationsplattformen
+      - "Make.com"
+      - "Integromat"
+      - "Zapier"
+      - "n8n"
+      - "iPaaS"
+      - "Power Automate"
+      - "Power Platform"
+      - "Power Apps"
+      # API- und Systemintegration
+      - "API-Integration*"
+      - "API-Anbindung*"
+      - "API-Schnittstelle*"
+      - "Schnittstellenintegration"
+      - "Systemintegration"
+      # Workflow- und Prozessautomatisierung
+      - "Workflow-Automatisierung"
+      - "Workflow Automation"
+      - "Workflow-Management"
+      - "Prozessautomatisierung"
+      - "Geschäftsprozessautomatisierung"
+      - "Business Process Automation"
+      - "Process Automation"
+      - "Prozessdigitalisierung"
+      - "RPA"
+      - "UiPath"
+      # KI-Prozessintegration
+      - "AI Integration"
+      - "KI-Integration"
+      - "AI Automation"
+      - "KI-Automatisierung"
+      - "KI-Agent*"
+      - "AI Agent*"
+      - "Generative KI"
+      - "Generative AI"
+      - "GenAI"
+      - "LLM"
+      - "ChatGPT"
+      - "Azure OpenAI"
+      - "Copilot Studio"
+      - "Microsoft Copilot"
+      - "M365 Copilot"
+      # Power BI & SharePoint
+      - "Power BI"
+      - "Power Query"
+      - "Microsoft Fabric"
+      - "Business Intelligence"
+      - "BI-Reporting"
+      - "SharePoint"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gruppe B: IT-Infrastruktur, Netzwerke, Sophos, Firewall, VLAN,
+  # Microsoft 365, IT-Transformation, Security Assessments
+  # ───────────────────────────────────────────────────────────────────────────
+  infra_security:
+    include_min_matches: 1
+    include_terms:
+      # IT-Infrastruktur
+      - "IT-Infrastruktur*"
+      - "IT Infrastructure"
+      - "Serverinfrastruktur"
+      - "Rechenzentrum*"
+      - "Windows Server"
+      - "VMware"
+      - "Hyper-V"
+      - "Systemadministr*"
+      - "IT-Administr*"
+      - "Systemintegration"
+      # Netzwerk
+      - "Netzwerkinfrastruktur"
+      - "Netzwerkadministr*"
+      - "Netzwerktechnik*"
+      - "Netzwerkarchitekt*"
+      - "Netzwerksicherheit"
+      - "Netzwerksegmentierung"
+      - "Netzwerkmodernisierung"
+      - "Netzwerkmigration"
+      - "Netzwerkmanagement"
+      - "Netzwerk-Engineer*"
+      - "Network Engineer*"
+      - "Network Security"
+      - "Network Infrastructure"
+      - "VLAN*"
+      - "SD-WAN"
+      - "LAN/WAN"
+      - "VPN"
+      # Firewall / Sophos
+      - "Sophos"
+      - "Firewall*"
+      - "Fortinet"
+      - "FortiGate"
+      - "Palo Alto"
+      - "Check Point"
+      # Microsoft 365
+      - "Microsoft 365"
+      - "M365"
+      - "Office 365"
+      - "O365"
+      - "Entra ID"
+      - "Azure AD"
+      - "Active Directory"
+      - "Intune"
+      - "Exchange Online"
+      # IT-Transformation
+      - "IT-Transformation"
+      - "IT-Modernisierung"
+      - "Infrastrukturmodernisierung"
+      # Security Assessments / IT-Sicherheit
+      - "Security Assessment*"
+      - "Security Audit*"
+      - "Sicherheitsaudit*"
+      - "IT-Sicherheit*"
+      - "IT-Security"
+      - "Informationssicherheit*"
+      - "Cyber Security"
+      - "Cybersicherheit"
+      - "ISO 27001"
+      - "ISO/IEC 27001"
+      - "ISMS"
+      - "NIS-2"
+      - "BSI-Grundschutz"
+      - "IT-Grundschutz"
+      - "SIEM"
+      - "Penetrationstest*"
+      - "Pentest*"
+      - "Endpoint Security"
+      - "Microsoft Defender"
+      - "Zero Trust"

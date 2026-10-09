@@ -33,9 +33,17 @@ Designprinzip:
 
 from __future__ import annotations
 
+import copy
+import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# Versionierte Standardwerte für die fachlichen Einschlusskriterien je Suchgruppe
+DEFAULT_TOPIC_FILTERS_PATH = Path(__file__).parent / "search_group_filters.yaml"
 
 # FilterConfig is imported lazily to avoid circular dependencies;
 # the TYPE_CHECKING guard keeps mypy happy without a runtime import loop.
@@ -278,3 +286,78 @@ def load_search_groups(config: Dict[str, Any]) -> Dict[str, SearchGroupConfig]:
 
     # Sortiert nach priority (niedrigere Zahl = höhere Priorität)
     return dict(sorted(groups.items(), key=lambda kv: kv[1].priority))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fachliche Einschlusskriterien (Standardwerte aus search_group_filters.yaml)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_default_topic_filters(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    """
+    Liest die versionierten fachlichen Einschlusskriterien je Suchgruppe.
+
+    Returns:
+        Dict group_id → {"include_terms": [...], "include_min_matches": int}.
+        Leeres Dict, wenn die Datei fehlt oder nicht lesbar ist.
+    """
+    import yaml
+
+    filters_path = Path(path) if path is not None else DEFAULT_TOPIC_FILTERS_PATH
+    try:
+        with open(filters_path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning(
+            "Fachliche Standardfilter nicht lesbar: %s (%s)", filters_path, exc
+        )
+        return {}
+
+    raw = data.get("search_group_filters") or {}
+    return {gid: dict(v) for gid, v in raw.items() if isinstance(v, dict)}
+
+
+def apply_default_topic_filters(
+    config: Dict[str, Any],
+    defaults_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """
+    Ergänzt fehlende fachliche Einschlusskriterien der Suchgruppen.
+
+    Für jede Suchgruppe ohne eigenes ``filters.include_terms`` werden die
+    Begriffe aus search_group_filters.yaml eingetragen. Eine in config.yaml
+    gesetzte Liste (auch eine leere) hat Vorrang; alle übrigen Filter und
+    Einstellungen der Gruppe bleiben unverändert.
+
+    Returns:
+        Kopie von ``config`` mit ergänzten Filtern (Original bleibt unverändert).
+    """
+    groups = config.get("search_groups")
+    if not isinstance(groups, dict) or not groups:
+        return config
+
+    defaults = load_default_topic_filters(defaults_path)
+    merged = dict(config)
+    merged_groups = copy.deepcopy(groups)
+
+    for group_id, group in merged_groups.items():
+        if not isinstance(group, dict):
+            continue
+        filters = group.get("filters") or {}
+        if "include_terms" not in filters:
+            group_defaults = defaults.get(group_id) or {}
+            if group_defaults.get("include_terms"):
+                filters = dict(filters)
+                filters["include_terms"] = list(group_defaults["include_terms"])
+                filters.setdefault(
+                    "include_min_matches", group_defaults.get("include_min_matches", 1)
+                )
+                group["filters"] = filters
+        if not (group.get("filters") or {}).get("include_terms"):
+            logger.warning(
+                "Suchgruppe '%s' hat keine fachlichen Einschlusskriterien — "
+                "jeder Feed-Eintrag gilt als Treffer dieser Gruppe",
+                group_id,
+            )
+
+    merged["search_groups"] = merged_groups
+    return merged

@@ -92,6 +92,9 @@ class SearchGroupDispatcher:
         self.output_dir = output_dir
         self._dedupe = dedupe_service or DedupeService(output_dir)
         self._state_manager = ProjectStateManager(output_dir)
+        # (search_group_id, provider_url) bereits protokollierter Ablehnungen;
+        # wird beim ersten log_rejected() aus filter_rejected.jsonl geladen.
+        self._rejected_keys: Optional[set] = None
 
     # ── öffentliche API ────────────────────────────────────────────────────────
 
@@ -252,6 +255,29 @@ class SearchGroupDispatcher:
         }
 
         log_path = os.path.join(self.output_dir, "filter_rejected.jsonl")
+
+        # Derselbe Feed wird mehrmals täglich gelesen: eine Ablehnung je
+        # (Suchgruppe, URL) nur einmal protokollieren, sonst wächst das Log
+        # mit jedem Lauf um dieselben Einträge.
+        if self._rejected_keys is None:
+            self._rejected_keys = set()
+            try:
+                with open(log_path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        try:
+                            old = _json.loads(line)
+                        except ValueError:
+                            continue
+                        self._rejected_keys.add(
+                            (old.get("search_group_id"), old.get("provider_url"))
+                        )
+            except OSError:
+                pass
+        key = (search_group_id, provider_url)
+        if provider_url and key in self._rejected_keys:
+            return
+        self._rejected_keys.add(key)
+
         try:
             os.makedirs(self.output_dir, exist_ok=True)
             with open(log_path, "a", encoding="utf-8") as fh:
