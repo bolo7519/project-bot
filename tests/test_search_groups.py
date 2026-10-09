@@ -886,3 +886,59 @@ class TestModuleLevelSearchGroupIngestion:
         """run_full_workflow_for_search_groups ist importierbar."""
         from email_agent import run_full_workflow_for_search_groups
         assert callable(run_full_workflow_for_search_groups)
+
+
+# ---------------------------------------------------------------------------
+# Regression: No duplicate method definitions in EmailAgent
+# ---------------------------------------------------------------------------
+
+class TestNoDuplicateMethodDefinitions:
+    """Regressionstest: EmailAgent darf keine doppelten Methodendefinitionen enthalten."""
+
+    def test_no_duplicate_method_definitions(self):
+        """
+        AST-basierter Check: Jede Methode der EmailAgent-Klasse darf nur einmal
+        definiert sein. Verhindert die stille Überschreibung durch Python.
+        """
+        import ast
+        import pathlib
+
+        source = pathlib.Path(__file__).parent.parent / "email_agent.py"
+        tree = ast.parse(source.read_text())
+
+        duplicates = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "EmailAgent":
+                seen: dict[str, int] = {}
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef):
+                        name = item.name
+                        if name in seen:
+                            duplicates.setdefault(name, []).append(
+                                (seen[name], item.lineno)
+                            )
+                        else:
+                            seen[name] = item.lineno
+                break  # nur eine EmailAgent-Klasse erwartet
+
+        assert duplicates == {}, (
+            "Doppelte Methodendefinitionen in EmailAgent gefunden:\n"
+            + "\n".join(
+                f"  {name}: Zeilen {lines}"
+                for name, lines in duplicates.items()
+            )
+        )
+
+    def test_email_agent_class_found(self):
+        """Stellt sicher, dass EmailAgent im AST überhaupt gefunden wird."""
+        import ast
+        import pathlib
+
+        source = pathlib.Path(__file__).parent.parent / "email_agent.py"
+        tree = ast.parse(source.read_text())
+        class_names = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+        ]
+        assert "EmailAgent" in class_names, "Klasse EmailAgent nicht in email_agent.py gefunden"
