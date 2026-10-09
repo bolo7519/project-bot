@@ -82,6 +82,86 @@
             </div>
           </div>
 
+          <!-- LLM-Bewertung (Phase 5) -->
+          <div v-if="project.llm_evaluation" class="llm-section">
+            <h5>🤖 KI-Bewertung
+              <span :class="`eval-status-badge eval-${project.evaluation_status}`">
+                {{ evalStatusLabel(project.evaluation_status) }}
+              </span>
+              <span v-if="project.llm_priority" :class="`prio-badge prio-${project.llm_priority}`">
+                {{ project.llm_priority }}
+              </span>
+            </h5>
+
+            <!-- Profil-Scores -->
+            <div v-if="project.llm_evaluation.evaluations?.length" class="profile-evaluations">
+              <div
+                v-for="ev in project.llm_evaluation.evaluations"
+                :key="ev.profile_id"
+                class="profile-eval-card"
+                :class="{ 'best-profile': ev.profile_id === project.best_profile }"
+              >
+                <div class="profile-eval-header">
+                  <span class="profile-name">{{ ev.profile_id }}</span>
+                  <span class="profile-score">{{ ev.score }}%</span>
+                  <span v-if="ev.profile_id === project.best_profile" class="best-badge">★ Beste Übereinstimmung</span>
+                </div>
+                <div class="score-bar">
+                  <div class="score-bar-fill" :class="scoreColorClass(ev.score)" :style="{ width: ev.score + '%' }"></div>
+                </div>
+                <div v-if="ev.matched?.length" class="eval-matched">
+                  <span class="eval-tag-label">✓ Matched:</span>
+                  <span v-for="m in ev.matched" :key="m" class="eval-tag tag-matched">{{ m }}</span>
+                </div>
+                <div v-if="ev.missing?.length" class="eval-missing">
+                  <span class="eval-tag-label">✗ Fehlend:</span>
+                  <span v-for="m in ev.missing" :key="m" class="eval-tag tag-missing">{{ m }}</span>
+                </div>
+                <div v-if="ev.rationale" class="eval-rationale">{{ ev.rationale }}</div>
+              </div>
+            </div>
+
+            <!-- Kosten & Token -->
+            <div class="llm-cost-info">
+              <span v-if="project.llm_evaluation.cost_usd">
+                💰 {{ formatCost(project.llm_evaluation.cost_usd) }}
+              </span>
+              <span v-if="project.llm_evaluation.input_tokens">
+                📥 {{ project.llm_evaluation.input_tokens }} Token
+              </span>
+              <span v-if="project.llm_evaluation.output_tokens">
+                📤 {{ project.llm_evaluation.output_tokens }} Token
+              </span>
+              <span v-if="project.llm_evaluation.cache_hit" class="cache-hit">⚡ Cache-Treffer</span>
+              <span v-if="project.llm_evaluation.pii_replacements > 0" class="pii-info">
+                🔒 {{ project.llm_evaluation.pii_replacements }} PII-Ersetzungen
+              </span>
+            </div>
+          </div>
+
+          <div v-else-if="project.evaluation_status" class="llm-section llm-section-pending">
+            <h5>🤖 KI-Bewertung</h5>
+            <span :class="`eval-status-badge eval-${project.evaluation_status}`">
+              {{ evalStatusLabel(project.evaluation_status) }}
+            </span>
+          </div>
+
+          <!-- Manuelle Entscheidungen (Phase 5) -->
+          <div class="quick-decisions">
+            <button class="decision-btn btn-accept" @click="quickDecision('accepted')" :disabled="transitioning">
+              ✅ Interessant
+            </button>
+            <button class="decision-btn btn-review" @click="quickDecision('scraped')" :disabled="transitioning">
+              ⏸ Später prüfen
+            </button>
+            <button class="decision-btn btn-reject" @click="quickDecision('rejected')" :disabled="transitioning">
+              ❌ Ablehnen
+            </button>
+            <button class="decision-btn btn-undo" @click="undoState" :disabled="transitioning || !canUndo">
+              ↩ Rückgängig
+            </button>
+          </div>
+
           <!-- Action Buttons -->
           <div class="modal-actions">
             <button @click="close" class="cancel-btn">Close</button>
@@ -110,6 +190,9 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useProjectsStore } from '../stores/projects'
+import axios from 'axios'
+
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002'
 
 // Props
 const props = defineProps({
@@ -134,6 +217,7 @@ const project = ref(null)
 const loading = ref(false)
 const error = ref(null)
 const generating = ref(false)
+const transitioning = ref(false)
 
 // Computed
 const canGenerateApplication = computed(() => {
@@ -141,8 +225,73 @@ const canGenerateApplication = computed(() => {
 })
 
 const canTransition = computed(() => {
-  return project.value !== null  // Always show for any project
+  return project.value !== null
 })
+
+const canUndo = computed(() => {
+  return project.value?.state_history?.length >= 2
+})
+
+// Phase 5 helpers
+function evalStatusLabel(status) {
+  const labels = {
+    ok: 'Bewertet',
+    pending_retry: 'Ausstehend',
+    failed: 'Fehler',
+    unsafe_content: 'Unsicherer Inhalt',
+    not_evaluated: 'Nicht bewertet',
+  }
+  return labels[status] || status || '—'
+}
+
+function scoreColorClass(score) {
+  if (score >= 70) return 'score-high'
+  if (score >= 45) return 'score-medium'
+  return 'score-low'
+}
+
+function formatCost(usd) {
+  if (!usd) return '—'
+  return `$${Number(usd).toFixed(4)}`
+}
+
+// Quick decisions (Phase 5)
+const quickDecision = async (targetState) => {
+  if (!project.value || transitioning.value) return
+  transitioning.value = true
+  try {
+    await axios.put(
+      `${baseURL}/api/v1/projects/${project.value.id}/state`,
+      { state: targetState, note: 'Manuelle Entscheidung (Dashboard)', ui_context: true },
+      { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+    )
+    // Projekt neu laden
+    project.value = await projectsStore.fetchProjectById(project.value.id)
+    await projectsStore.fetchStats()
+  } catch (err) {
+    console.error('Quick decision failed:', err)
+  } finally {
+    transitioning.value = false
+  }
+}
+
+const undoState = async () => {
+  if (!project.value || transitioning.value || !canUndo.value) return
+  transitioning.value = true
+  try {
+    await axios.post(
+      `${baseURL}/api/v1/projects/${project.value.id}/undo_state`,
+      {},
+      { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+    )
+    project.value = await projectsStore.fetchProjectById(project.value.id)
+    await projectsStore.fetchStats()
+  } catch (err) {
+    console.error('Undo state failed:', err)
+  } finally {
+    transitioning.value = false
+  }
+}
 
 // Methods
 const close = () => {
@@ -549,6 +698,196 @@ watch(() => props.show, (newShow) => {
 .transition-btn:hover {
   background: #6d28d9;
 }
+
+/* LLM-Sektion */
+.llm-section {
+  margin-bottom: 1.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #f8fafc;
+}
+
+.llm-section h5 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.llm-section-pending { background: #fffbeb; border-color: #fde68a; }
+
+.eval-status-badge {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.eval-ok           { background: #dcfce7; color: #166534; }
+.eval-pending_retry { background: #fffbeb; color: #92400e; }
+.eval-failed       { background: #fef2f2; color: #991b1b; }
+.eval-unsafe_content { background: #fef9c3; color: #713f12; }
+.eval-not_evaluated { background: #f3f4f6; color: #374151; }
+
+.prio-badge {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.prio-high   { background: #dcfce7; color: #166534; }
+.prio-medium { background: #fef9c3; color: #92400e; }
+.prio-low    { background: #f3f4f6; color: #6b7280; }
+
+.profile-evaluations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.profile-eval-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.profile-eval-card.best-profile {
+  border-color: #4ade80;
+  background: #f0fdf4;
+}
+
+.profile-eval-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.profile-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.profile-score {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a202c;
+  margin-left: auto;
+}
+
+.best-badge {
+  font-size: 0.65rem;
+  color: #166534;
+  background: #dcfce7;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.score-bar {
+  height: 5px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.score-high   { background: #4ade80; }
+.score-medium { background: #facc15; }
+.score-low    { background: #f87171; }
+
+.eval-matched, .eval-missing {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.eval-tag-label {
+  font-weight: 600;
+  color: #374151;
+  margin-right: 0.2rem;
+}
+
+.eval-tag {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+}
+
+.tag-matched { background: #dcfce7; color: #166534; }
+.tag-missing { background: #fef2f2; color: #991b1b; }
+
+.eval-rationale {
+  font-size: 0.78rem;
+  color: #6b7280;
+  font-style: italic;
+  margin-top: 0.3rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.llm-cost-info {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: #6b7280;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.cache-hit { color: #059669; font-weight: 500; }
+.pii-info  { color: #d97706; }
+
+/* Manuelle Entscheidungen */
+.quick-decisions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.decision-btn {
+  flex: 1 1 auto;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.decision-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-accept { background: #dcfce7; color: #166534; }
+.btn-accept:hover:not(:disabled) { background: #bbf7d0; }
+
+.btn-review { background: #fef9c3; color: #713f12; }
+.btn-review:hover:not(:disabled) { background: #fde68a; }
+
+.btn-reject { background: #fef2f2; color: #991b1b; }
+.btn-reject:hover:not(:disabled) { background: #fecaca; }
+
+.btn-undo { background: #f3f4f6; color: #374151; }
+.btn-undo:hover:not(:disabled) { background: #e5e7eb; }
 
 /* Responsive design */
 @media (max-width: 768px) {
