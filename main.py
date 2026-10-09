@@ -20,6 +20,37 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def read_llm_score_from_file(project_file: str) -> int:
+    """
+    Read the LLM fit score from a project markdown file.
+
+    Falls back to 0 if the file cannot be read or contains no score.
+    The score is written into the Markdown body by evaluate_projects.py and
+    is NOT stored in the YAML frontmatter, so we scan the body text.
+
+    Args:
+        project_file: Path to the project markdown file
+
+    Returns:
+        Integer score 0-100 (0 when not found)
+    """
+    import re
+    try:
+        with open(project_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # Pattern used in server_enhanced.py / extract_latest_scores()
+        match = re.search(r'\*\*LLM Score:\*\*\s*(\d+)%', content)
+        if match:
+            return int(match.group(1))
+        # Fallback: pre-eval score if no LLM score present
+        pre_match = re.search(r'\*\*Pre-Evaluation Score:\*\*\s*(\d+)%', content)
+        if pre_match:
+            return int(pre_match.group(1))
+    except OSError:
+        pass
+    return 0
+
+
 def load_cv_content(cv_file: str) -> str:
     """
     Load CV content from file.
@@ -89,9 +120,11 @@ def generate_applications_for_accepted_projects(config_path: str, cv_content: st
         for project_file in accepted_projects:
             print(f"Processing: {os.path.basename(project_file)}")
 
-            # For accepted projects, we assume they meet the threshold
-            # In a real implementation, we'd need to read the fit score from the file
-            fit_score = 95  # Default high score for accepted projects
+            # Read the actual LLM score that evaluate_projects.py wrote into the file.
+            # Bug fix (Phase 0): the previous code hardcoded 95 here, which bypassed
+            # the configured application_threshold and caused all accepted projects to
+            # be treated as perfect matches regardless of their real score.
+            fit_score = read_llm_score_from_file(project_file)
 
             result = generator.process_project(project_file, cv_content, fit_score)
 
@@ -250,9 +283,11 @@ def handle_manual_application_generation(args) -> None:
 
             print(f"Processing: {os.path.basename(project_file)}")
 
-            # For manual generation, use high fit score to ensure processing
-            fit_score = 95
-            logger.debug(f"🎯 Using fit score: {fit_score}")
+            # Read the actual LLM score from the project file.
+            # Bug fix (Phase 0): the previous code hardcoded 95, bypassing the threshold
+            # for manually triggered application generation as well.
+            fit_score = read_llm_score_from_file(project_file)
+            logger.debug(f"🎯 Using fit score from file: {fit_score}")
 
             try:
                 result = generator.process_project(project_file, cv_content, fit_score)
@@ -560,9 +595,17 @@ if __name__ == "__main__":
     # After fetching projects, run the evaluation (unless skipped)
     if not args.skip_evaluation:
         print("\nStarting project evaluation...")
-        # Clear argv to prevent evaluate_projects.py from parsing parent script's arguments
-        sys.argv = [sys.argv[0]]
-        evaluate_projects.main()
+        # Bug fix (Phase 0): the previous code set sys.argv = [sys.argv[0]], which
+        # silently discarded --config and --cv-file and forced evaluate_projects.main()
+        # to use hardcoded defaults regardless of what the user passed.
+        # We now rebuild sys.argv with only the arguments that evaluate_projects accepts.
+        eval_argv = [sys.argv[0], "--config", args.config, "--cv", args.cv_file]
+        saved_argv = sys.argv
+        sys.argv = eval_argv
+        try:
+            evaluate_projects.main()
+        finally:
+            sys.argv = saved_argv
 
         # After evaluation, run application generation (unless disabled)
         if not args.no_applications:

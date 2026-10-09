@@ -1,0 +1,21 @@
+# Minimale Testkonfiguration – keine echten Credentials, kein Produktivzugriff
+settings:
+  acceptance_threshold: 85
+  pre_eval_threshold: 30
+  max_projects_per_run: 5
+  output_dir: projects
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  api_key: "test-key-not-real"
+
+cv_file: data/cv.md
+
+providers:
+  freelancermap:
+    enabled: true
+    channels:
+      rss:
+        url: "https://www.freelancermap.de/rss/projektboerse.xml"
+        max_age_days: 7

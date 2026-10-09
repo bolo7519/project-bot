@@ -37,8 +37,12 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Enable CORS for all origins (server now listens on all interfaces)
-CORS(app, origins=["*"])
+# SECURITY (Phase 0): CORS is restricted to localhost only.
+# The previous wildcard origins=["*"] combined with host='0.0.0.0' and debug=True
+# exposed the API and the Flask debugger to the entire local network without
+# authentication.  Only loopback origins are allowed until authentication is added.
+# TODO Phase 9: Add proper authentication (API key or session) before any public deployment.
+CORS(app, origins=["http://localhost:8002", "http://127.0.0.1:8002"])
 
 # Disable caching globally
 @app.after_request
@@ -1976,10 +1980,18 @@ if __name__ == '__main__':
     import os
     logger.info(f"🚀 Server starting with PID: {os.getpid()} at {datetime.now().isoformat()}")
     print("🚀 Starting Enhanced Flask Backend for Vue3 Frontend...")
-    print("📊 API: http://0.0.0.0:8002/api/v1/")
-    print("🔧 Health: http://0.0.0.0:8002/api/v1/health")
-    print("🌐 Frontend: http://0.0.0.0:8002/ (when built)")
-    print("🌍 Server accessible from all network interfaces")
+    # SECURITY (Phase 0): Bind to 127.0.0.1 (loopback only) instead of 0.0.0.0.
+    # debug=True is disabled to prevent the Werkzeug interactive debugger from being
+    # exposed; it allows arbitrary code execution if reachable from the network.
+    # TODO Phase 9: Add authentication before changing host binding.
+    _host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    _port = int(os.environ.get('FLASK_PORT', '8002'))
+    _debug = os.environ.get('FLASK_DEBUG', '0').lower() in ('1', 'true', 'yes')
+
+    print(f"📊 API: http://{_host}:{_port}/api/v1/")
+    print(f"🔧 Health: http://{_host}:{_port}/api/v1/health")
+    print(f"🌐 Frontend: http://{_host}:{_port}/ (when built)")
+    print(f"🔒 Binding to {_host} (loopback only by default – set FLASK_HOST=0.0.0.0 to expose)")
     print("📁 Projects Directory: projects/")
     print("🔄 State Management: Enhanced")
     print("📋 API Version: v1")
@@ -1989,9 +2001,9 @@ if __name__ == '__main__':
     startup()
 
     app.run(
-        debug=True,
-        host='0.0.0.0',
-        port=8002,
+        debug=_debug,
+        host=_host,
+        port=_port,
         threaded=True,
         use_reloader=False
     )

@@ -1733,72 +1733,11 @@ def run_email_ingestion(provider_ids: str, config: Dict[str, Any], output_dir: s
         # Single provider
         return agent.run_once(provider_ids, output_dir, dry_run)
 
-def run_rss_ingestion(provider_ids: str, config: Dict[str, Any], output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
-    """
-    Convenience function to run RSS ingestion for one or more providers.
-
-    Args:
-        provider_ids: Provider identifier(s) - single provider, "all", or comma-separated list
-        config: Full configuration dictionary
-        output_dir: Output directory for project files
-        dry_run: If True, validate config and simulate without side effects
-
-    Returns:
-        Summary of the ingestion run(s)
-    """
-    agent = EmailAgent(config)
-
-    # Handle different provider_id formats
-    if provider_ids == "all":
-        # For RSS, we need to run for all providers that have RSS config
-        providers_with_rss = []
-        for provider_id, provider_config in config.get('providers', {}).items():
-            if provider_config.get('channels', {}).get('rss'):
-                providers_with_rss.append(provider_id)
-
-        results = []
-        for provider_id in providers_with_rss:
-            result = agent.run_rss_ingestion(provider_id, output_dir, dry_run)
-            results.append(result)
-
-        return {
-            'providers': providers_with_rss,
-            'results': results,
-            'total_projects_saved': sum(r.get('projects_saved', 0) for r in results),
-            'total_errors': sum(r.get('errors', 0) for r in results)
-        }
-    elif "," in provider_ids:
-        # Multiple providers specified
-        provider_list = [p.strip() for p in provider_ids.split(",")]
-        results = []
-        for provider_id in provider_list:
-            result = agent.run_rss_ingestion(provider_id, output_dir, dry_run)
-            results.append(result)
-        # Aggregate results (simplified)
-        return {
-            'providers': provider_list,
-            'results': results,
-            'total_projects_saved': sum(r.get('projects_saved', 0) for r in results),
-            'total_errors': sum(r.get('errors', 0) for r in results)
-        }
-    else:
-        # Single provider
-        return agent.run_rss_ingestion(provider_ids, output_dir, dry_run)
-
-def run_full_workflow(config: Dict[str, Any], output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
-    """
-    Convenience function to run the complete workflow (RSS + Email ingestion for all enabled providers).
-
-    Args:
-        config: Full configuration dictionary
-        output_dir: Output directory for project files
-        dry_run: If True, validate configs and simulate operations without side effects
-
-    Returns:
-        Summary of the full workflow run
-    """
-    agent = EmailAgent(config)
-    return agent.run_full_workflow(output_dir, dry_run)
+# Bug fix (Phase 0): run_rss_ingestion and run_full_workflow were defined twice.
+# The first definition of run_rss_ingestion used a hand-rolled "all" loop that
+# silently ignored max_age_days; the first run_full_workflow just delegated to
+# agent.run_full_workflow() which is a stub. Both first definitions are removed;
+# only the second (more complete) definition below is kept.
 
 def run_rss_ingestion(provider_ids: str, config: Dict[str, Any], output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
     """
