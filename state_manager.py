@@ -4,14 +4,22 @@ Project State Manager for Bewerbungs-Bot
 
 This module provides state management for project files using YAML frontmatter.
 Replaces directory-based state management with self-contained project files.
+
+Phase 1: Integriert ProjectRecord (Schema v2).
+- read_project() gibt weiterhin (Dict, str) zurück (v1-Kompatibilität)
+- read_project_record() gibt ein ProjectRecord-Objekt zurück (neu)
+- write_project() schreibt immer Schema v2 wenn ein ProjectRecord übergeben wird
+- Bestehende v1-Dateien werden beim nächsten Schreibzugriff automatisch auf v2 upgradet
 """
 
 import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 import yaml
+
+from project_record import ProjectRecord, CURRENT_SCHEMA_VERSION
 
 
 class ProjectStateManager:
@@ -107,6 +115,9 @@ class ProjectStateManager:
 
         Returns:
             Tuple of (frontmatter_dict, body_content)
+
+        Note: Rückgabetyp bleibt Dict für v1-Kompatibilität.
+              Verwende read_project_record() für den typisierten Zugriff.
         """
         try:
             with open(project_path, 'r', encoding='utf-8') as f:
@@ -117,6 +128,53 @@ class ProjectStateManager:
         except Exception as e:
             print(f"Error reading project {project_path}: {e}")
             return {}, ''
+
+    def read_project_record(self, project_path: str) -> Tuple[Optional[ProjectRecord], str]:
+        """
+        Read project file and return a typed ProjectRecord object.
+
+        Supports Schema v1 and v2. v1-files are converted on-the-fly
+        but NOT written back (use write_project_record for that).
+
+        Args:
+            project_path: Path to project file
+
+        Returns:
+            Tuple of (ProjectRecord or None on error, body_content)
+        """
+        fm, body = self.read_project(project_path)
+        if not fm:
+            return None, body
+        try:
+            record = ProjectRecord.from_frontmatter_dict(fm)
+            return record, body
+        except Exception as e:
+            print(f"Error converting to ProjectRecord {project_path}: {e}")
+            return None, body
+
+    def write_project_record(self, project_path: str, record: ProjectRecord, body: str) -> bool:
+        """
+        Write a ProjectRecord to disk as Schema v2 frontmatter + body.
+
+        Always writes Schema v2, even if the file was Schema v1 before.
+        This is the safe upgrade path: explicit write = explicit upgrade.
+
+        Args:
+            project_path: Path to project file
+            record: ProjectRecord to write
+            body: Body content (unchanged)
+
+        Returns:
+            True if successful
+        """
+        try:
+            content = record.to_frontmatter_text() + body
+            with open(project_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            print(f"Error writing ProjectRecord {project_path}: {e}")
+            return False
 
     def write_project(self, project_path: str, frontmatter: Dict[str, Any], body: str) -> bool:
         """
