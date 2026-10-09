@@ -2187,11 +2187,20 @@ import atexit
 @atexit.register
 def shutdown():
     """Shutdown scheduler on app exit"""
+    import logging as _logging
     try:
         scheduler_manager.stop()
-        logger.info("Scheduler stopped successfully")
-    except Exception as e:
-        logger.error(f"Error stopping scheduler: {e}")
+    except Exception:
+        pass
+    # Alle Logging-Handler sauber schließen, bevor das Prozess-Teardown
+    # sie ungültig macht (verhindert "I/O operation on closed file" in pytest).
+    root_logger = _logging.getLogger()
+    for handler in list(root_logger.handlers):
+        try:
+            handler.close()
+        except Exception:
+            pass
+    root_logger.handlers.clear()
 
 if __name__ == '__main__':
     import os
