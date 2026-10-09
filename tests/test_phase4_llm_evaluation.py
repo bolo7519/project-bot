@@ -902,17 +902,19 @@ class TestBudgetPersistenceAndEdgeCases:
 
     def test_budget_reloaded_after_restart(self, tmp_path):
         """T43: Tagesverbrauch bleibt nach Prozessneustart erhalten (Persistenz)."""
-        # Erster Prozess: Record 0.80 USD
+        # Erster Prozess: Reservierung + Record 0.80 USD (type=actual)
         tracker1 = self._make_tracker(
             tmp_path, daily_budget_usd=1.0, max_cost_per_call_usd=1.0
         )
-        tracker1.record("p1", "m", 0.80, 1000, 200)
+        ok, _, rid = tracker1.check_and_reserve(0.80)
+        assert ok
+        tracker1.record("p1", "m", 0.80, 1000, 200, reservation_id=rid)
 
         # Zweiter Prozess: soll 0.80 bereits verbraucht sehen
         tracker2 = self._make_tracker(
             tmp_path, daily_budget_usd=1.0, max_cost_per_call_usd=1.0
         )
-        ok, reason = tracker2.check_budget(0.30)  # 0.80 + 0.30 > 1.0
+        ok, reason, _ = tracker2.check_and_reserve(0.30)  # 0.80 + 0.30 > 1.0
         assert not ok, "Budget muss nach Neustart korrekt akkumuliert sein"
         assert "Tagesbudget" in reason or "daily" in reason.lower() or "budget" in reason.lower()
 
@@ -923,13 +925,15 @@ class TestBudgetPersistenceAndEdgeCases:
             daily_budget_usd=10.0,
         )
         for i in range(3):
-            tracker1.record(f"p{i}", "m", 1.60, 500, 100)  # 3 × 1.60 = 4.80
+            ok, _, rid = tracker1.check_and_reserve(1.60)
+            assert ok
+            tracker1.record(f"p{i}", "m", 1.60, 500, 100, reservation_id=rid)  # 3×1.60=4.80
 
         tracker2 = self._make_tracker(
             tmp_path, monthly_budget_usd=5.0, max_cost_per_call_usd=2.0,
             daily_budget_usd=10.0,
         )
-        ok, reason = tracker2.check_budget(0.30)  # 4.80 + 0.30 > 5.0
+        ok, reason, _ = tracker2.check_and_reserve(0.30)  # 4.80 + 0.30 > 5.0
         assert not ok
         assert "Monatsbudget" in reason or "monthly" in reason.lower() or "budget" in reason.lower()
 
@@ -937,12 +941,12 @@ class TestBudgetPersistenceAndEdgeCases:
         """T45: max_calls_per_run wird exakt eingehalten."""
         tracker = self._make_tracker(tmp_path, max_calls_per_run=3)
         for i in range(3):
-            ok, _ = tracker.check_budget(0.01)
+            ok, _, rid = tracker.check_and_reserve(0.01)
             assert ok, f"Aufruf {i+1} soll erlaubt sein"
-            tracker.record(f"p{i}", "m", 0.01, 100, 50)
+            tracker.record(f"p{i}", "m", 0.01, 100, 50, reservation_id=rid)
 
         # 4. Aufruf muss abgelehnt werden
-        ok, reason = tracker.check_budget(0.01)
+        ok, reason, _ = tracker.check_and_reserve(0.01)
         assert not ok
         assert "3" in reason or "Lauf" in reason or "Aufrufe" in reason
 
@@ -953,14 +957,22 @@ class TestBudgetPersistenceAndEdgeCases:
         assert not ok
 
     def test_cost_log_fields_complete(self, tmp_path):
-        """T47: Kostenprotokoll enthält alle Pflichtfelder."""
+        """T47: Tatsächlicher Kosteneintrag (type=actual) enthält alle Pflichtfelder."""
         tracker = self._make_tracker(tmp_path)
-        tracker.record("test-proj", "claude-haiku", 0.0042, 350, 120)
+        # check_and_reserve + record → tatsächlicher Eintrag
+        ok, _, reservation_id = tracker.check_and_reserve(0.0042)
+        assert ok
+        tracker.record("test-proj", "claude-haiku", 0.0042, 350, 120,
+                       reservation_id=reservation_id)
 
         log_path = tmp_path / "llm_cost_log.jsonl"
         with open(log_path, encoding="utf-8") as fh:
-            entry = json.loads(fh.readline())
+            entries = [json.loads(l) for l in fh if l.strip()]
 
+        # Genau ein Eintrag — die Reservierung wurde durch den actual-Eintrag ersetzt
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.get("type") == "actual"
         assert "timestamp" in entry
         assert "project_id" in entry
         assert "model" in entry
@@ -972,7 +984,7 @@ class TestBudgetPersistenceAndEdgeCases:
         assert abs(entry["cost_usd"] - 0.0042) < 1e-6
 
     def test_retry_does_not_double_count_budget(self, tmp_path):
-        """T48: Fehlgeschlagene Retries zählen nicht als erfolgreiche API-Aufrufe."""
+        """T48: Fehlgeschlagene Retries erzeugen keinen type=actual-Kosteneintrag."""
         profiles_dir = tmp_path / "competency_profiles"
         profiles_dir.mkdir()
         for pid in PROFILE_IDS:
@@ -991,14 +1003,18 @@ class TestBudgetPersistenceAndEdgeCases:
 
         assert result.evaluation_status == "pending_retry"
 
-        # Budget-Log darf keinen Eintrag enthalten
+        # Budget-Log darf keinen type=actual-Eintrag enthalten
+        # (Reservierungen sind erlaubt und konservativ — sie schützen das Budget)
         log_path = tmp_path / "llm_cost_log.jsonl"
         if log_path.exists():
             with open(log_path, encoding="utf-8") as fh:
-                entries = [l for l in fh if l.strip()]
-            assert len(entries) == 0, "Fehlgeschlagene Aufrufe dürfen nicht ins Kostenlog"
+                entries = [json.loads(l) for l in fh if l.strip()]
+            actual_entries = [e for e in entries if e.get("type") == "actual"]
+            assert len(actual_entries) == 0, (
+                "Fehlgeschlagene Aufrufe dürfen keinen type='actual'-Eintrag erzeugen"
+            )
 
-        # run-Counter bleibt 0
+        # run-Counter bleibt 0 (kein erfolgreicher Aufruf)
         summary = evaluator.budget_summary()
         assert summary["calls_this_run"] == 0
 
@@ -1471,3 +1487,151 @@ class TestEndToEnd:
         # Dieser Test sendet keine E-Mails — er ruft nur evaluate() auf.
         # Das ist per Design sichergestellt (run_evaluation_pass macht kein smtp.send)
         assert "smtp" not in str(stats).lower(), "Kein SMTP im Evaluations-Lauf"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T59: Parallele Budget-Atomarität (Prüfbereich 2 — Race Condition)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestParallelBudgetAtomicity:
+    """
+    T59: Zwei parallele Evaluatoren dürfen das Budget nicht gemeinsam überschreiten.
+
+    Simuliert zwei Prozesse die gleichzeitig check_and_reserve() aufrufen.
+    Nur einer soll Zugriff erhalten wenn das Budget nur für einen Aufruf reicht.
+    """
+
+    def test_parallel_evaluators_respect_budget(self, tmp_path):
+        """
+        T59: Parallele check_and_reserve()-Aufrufe mit Threads schützen Budget.
+
+        Setup: Tagesbudget = 0.50 USD. Beide Prozesse versuchen 0.40 USD zu reservieren.
+        Erwartet: Genau einer erhält Zugriff (0.40 ≤ 0.50), der zweite wird abgelehnt
+        (0.40 + 0.40 = 0.80 > 0.50).
+        """
+        import threading
+
+        results = []
+        reservation_ids = []
+        lock = threading.Lock()
+
+        def try_reserve():
+            tracker = BudgetTracker(
+                str(tmp_path),
+                daily_budget_usd=0.50,
+                monthly_budget_usd=10.0,
+                max_calls_per_run=10,
+                max_cost_per_call_usd=1.0,
+            )
+            ok, reason, rid = tracker.check_and_reserve(0.40)
+            with lock:
+                results.append((ok, reason, rid))
+                if ok:
+                    reservation_ids.append((tracker, rid))
+
+        # Beide Threads starten nahezu gleichzeitig
+        t1 = threading.Thread(target=try_reserve)
+        t2 = threading.Thread(target=try_reserve)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(results) == 2, "Beide Threads müssen geantwortet haben"
+
+        ok_count = sum(1 for ok, _, _ in results if ok)
+        assert ok_count == 1, (
+            f"Genau ein Thread soll das Budget erhalten, beide erhielten: "
+            f"{[ok for ok, _, _ in results]}"
+        )
+
+        # Den erfolgreichen Eintrag als actual abschließen
+        for tracker, rid in reservation_ids:
+            tracker.record("parallel-proj", "test-model", 0.40, 100, 50,
+                           reservation_id=rid)
+
+        # Kostenlog prüfen: genau eine Reservierung (inzwischen actual) und
+        # eine abgelehnte (kein Eintrag)
+        log_path = tmp_path / "llm_cost_log.jsonl"
+        with open(log_path, encoding="utf-8") as fh:
+            entries = [json.loads(l) for l in fh if l.strip()]
+
+        actual_entries = [e for e in entries if e.get("type") == "actual"]
+        assert len(actual_entries) == 1, "Genau ein tatsächlicher Kosteneintrag erwartet"
+        assert abs(actual_entries[0]["cost_usd"] - 0.40) < 1e-6
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T60–T61: PII-Sicherheit — Telefon- und IBAN-Residuen (erweitert)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPIIResidualSafetyExtended:
+    """T60–T61: Residuale Telefonnummern und IBANs blockieren is_safe_to_send()."""
+
+    def test_residual_phone_blocks_send(self):
+        """T60: Residuale Telefonnummer nach Scrubbing → is_safe_to_send() = False."""
+        # Konstruiere ein ScrubResult das noch eine Telefonnummer enthält
+        result = ScrubResult(
+            text="A" * 200 + " +49 89 123 456 78 " + "B" * 50,
+            replacements={},
+        )
+        assert not result.is_safe_to_send(), (
+            "Residuale Telefonnummer muss is_safe_to_send() = False auslösen"
+        )
+
+    def test_residual_iban_blocks_send(self):
+        """T61: Residuale IBAN nach Scrubbing → is_safe_to_send() = False."""
+        result = ScrubResult(
+            text="A" * 200 + " DE89 3704 0044 0532 0130 00 " + "B" * 50,
+            replacements={},
+        )
+        assert not result.is_safe_to_send(), (
+            "Residuale IBAN muss is_safe_to_send() = False auslösen"
+        )
+
+    def test_api_never_called_with_residual_pii(self, tmp_path):
+        """
+        T62: _call_api() wird niemals aufgerufen wenn PII-Residuen vorhanden.
+
+        Simuliert einen Text der nach dem Scrubbing noch eine Telefonnummer enthält
+        (unrealistisch in der Praxis, aber als Defense-in-Depth-Test wichtig).
+        """
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir()
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(f"# {pid}\n- kw\n", encoding="utf-8")
+
+        evaluator = LLMEvaluator(
+            config=_minimal_config(cache_enabled=False),
+            output_dir=str(tmp_path),
+            profiles_dir=profiles_dir,
+        )
+
+        api_calls = []
+
+        def mock_call_api(self_inner, prompt):
+            api_calls.append(prompt)
+            return _ok_api_response(), 100, 50
+
+        # Patch den Scrubber so dass er eine Telefonnummer im Text lässt
+        # (simuliert einen Scrubber-Fehler / unbekanntes Format)
+        original_scrub = PIIScrubber.scrub
+
+        def scrub_with_residual(self_inner, text):
+            result = original_scrub(self_inner, text)
+            # Residuale Telefonnummer injizieren (für den Test)
+            result.text = result.text + " +49 30 99887766"
+            return result
+
+        with patch.object(PIIScrubber, "scrub", scrub_with_residual), \
+             patch.object(type(evaluator), "_call_api", mock_call_api):
+            long_text = "Python CRM Salesforce Django REST API Kubernetes " * 10
+            result = evaluator.evaluate("proj-pii-residual", long_text)
+
+        # API darf NICHT aufgerufen worden sein
+        assert len(api_calls) == 0, (
+            "API darf nicht aufgerufen werden wenn is_safe_to_send() = False"
+        )
+        assert result.evaluation_status in ("pending_retry", "failed", "unsafe_content"), (
+            f"Erwartet Fehlerstatus, erhalten: {result.evaluation_status}"
+        )

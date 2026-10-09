@@ -39,12 +39,14 @@ Konfiguration (config.yaml, Abschnitt 'llm_evaluation'):
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
 from pathlib import Path
@@ -273,11 +275,34 @@ class LLMEvaluationCache:
 
 class BudgetTracker:
     """
-    Verfolgt API-Kosten und Aufrufzähler.
+    Verfolgt API-Kosten und Aufrufzähler — prozessübergreifend atomar.
 
     Protokolldatei: {output_dir}/llm_cost_log.jsonl
-    Tages-/Monatsbudget wird gegen tatsächlichen Verbrauch geprüft (nicht gegen Schätzungen).
+
+    Atomaritäts-Mechanismus:
+        check_and_reserve() und record() halten während ihrer kritischen
+        Abschnitte eine exklusive fcntl-Dateisperre (LOCK_EX) auf der
+        Protokolldatei. Dadurch können zwei parallele Evaluations-Prozesse
+        das Budget nicht gleichzeitig überschreiten:
+
+        Prozess A liest den aktuellen Verbrauch, prüft das Budget, schreibt
+        einen Reservierungs-Eintrag (type="reserved") und gibt die Sperre
+        frei — alles in einem einzigen gesperrten Block. Prozess B sieht
+        die Reservierung beim nächsten Lock-Versuch. record() ersetzt die
+        Reservierung durch den tatsächlichen Kosten-Eintrag (type="actual").
+        Fehlgeschlagene oder abgebrochene Aufrufe hinterlassen eine
+        Reservierung, die beim nächsten Start bereinigt werden kann (oder
+        nach einem Neustart des Prozesses verfällt, da die Reservierung
+        als Schätzung konservativ in die Budgetberechnung einfließt).
+
+    Einschränkung:
+        fcntl.flock() funktioniert nicht über NFS und einige andere
+        Netzwerk-Dateisysteme zuverlässig. Für lokale Dateisysteme
+        (ext4, APFS, NTFS) ist es ausreichend.
     """
+
+    _RESERVATION_TYPE = "reserved"
+    _ACTUAL_TYPE = "actual"
 
     def __init__(
         self,
@@ -294,19 +319,87 @@ class BudgetTracker:
         self.max_cost_per_call = max_cost_per_call_usd
         self._calls_this_run = 0
         self._cost_this_run = 0.0
-        self._loaded_stats: Optional[Dict[str, float]] = None
+        # Reservierungs-IDs dieses Prozesses (reservation_id → estimated_cost)
+        self._reservations: Dict[str, float] = {}
 
-    def _load_stats(self) -> Dict[str, float]:
-        """Liest Tages- und Monatsverbrauch aus der Protokolldatei."""
-        if self._loaded_stats is not None:
-            return self._loaded_stats
-
+    def _read_stats_locked(self, fh) -> Dict[str, float]:
+        """
+        Liest Tages-/Monatsverbrauch aus der geöffneten (und gesperrten)
+        Protokolldatei. Reservierungen werden konservativ mitgezählt.
+        """
         today = date.today().isoformat()
-        month = today[:7]  # YYYY-MM
+        month = today[:7]
 
         daily_usd = 0.0
         monthly_usd = 0.0
 
+        fh.seek(0)
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                ts = entry.get("timestamp", "")[:10]
+                cost = float(entry.get("cost_usd", 0.0))
+                if ts == today:
+                    daily_usd += cost
+                if ts[:7] == month:
+                    monthly_usd += cost
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        return {"daily_usd": daily_usd, "monthly_usd": monthly_usd}
+
+    def _open_log_locked(self):
+        """
+        Öffnet oder erstellt die Protokolldatei und hält LOCK_EX.
+        Gibt das Datei-Handle zurück — Aufrufer muss es schließen/freigeben.
+        """
+        os.makedirs(self._log_path.parent, exist_ok=True)
+        fh = open(self._log_path, "a+", encoding="utf-8")
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return fh
+
+    def check_budget(self, estimated_cost_usd: float) -> Tuple[bool, str]:
+        """
+        Prüft ob ein weiterer Aufruf zulässig ist (ohne Reservierung).
+
+        Für die atomare check+reserve-Operation check_and_reserve() verwenden.
+        Diese Methode liest die Datei ohne Sperre und ist nur für
+        schnelle Vorab-Prüfungen (z. B. max_cost_per_call) gedacht.
+        """
+        if self._calls_this_run >= self.max_calls_per_run:
+            return False, (
+                f"Maximale Aufrufe pro Lauf erreicht ({self.max_calls_per_run})"
+            )
+        if estimated_cost_usd > self.max_cost_per_call:
+            return False, (
+                f"Geschätzte Kosten pro Aufruf ({estimated_cost_usd:.4f} USD) "
+                f"überschreiten Limit ({self.max_cost_per_call:.4f} USD)"
+            )
+        # Schnellprüfung ohne Sperre — finale Prüfung in check_and_reserve()
+        stats = self._read_stats_nolocked()
+        if stats["daily_usd"] + estimated_cost_usd > self.daily_budget:
+            return False, (
+                f"Tagesbudget würde überschritten "
+                f"({stats['daily_usd']:.4f} + {estimated_cost_usd:.4f} "
+                f"> {self.daily_budget:.4f} USD)"
+            )
+        if stats["monthly_usd"] + estimated_cost_usd > self.monthly_budget:
+            return False, (
+                f"Monatsbudget würde überschritten "
+                f"({stats['monthly_usd']:.4f} + {estimated_cost_usd:.4f} "
+                f"> {self.monthly_budget:.4f} USD)"
+            )
+        return True, ""
+
+    def _read_stats_nolocked(self) -> Dict[str, float]:
+        """Liest Stats ohne Sperre (für Vorab-Prüfungen in check_budget)."""
+        today = date.today().isoformat()
+        month = today[:7]
+        daily_usd = 0.0
+        monthly_usd = 0.0
         if self._log_path.exists():
             try:
                 with open(self._log_path, encoding="utf-8") as fh:
@@ -326,53 +419,94 @@ class BudgetTracker:
                             pass
             except OSError:
                 pass
+        return {"daily_usd": daily_usd, "monthly_usd": monthly_usd}
 
-        self._loaded_stats = {"daily_usd": daily_usd, "monthly_usd": monthly_usd}
-        return self._loaded_stats
-
-    def check_budget(self, estimated_cost_usd: float) -> Tuple[bool, str]:
+    def check_and_reserve(self, estimated_cost_usd: float) -> Tuple[bool, str, str]:
         """
-        Prüft ob ein weiterer Aufruf mit geschätzten Kosten zulässig ist.
+        Atomar: prüft Budget unter exklusiver Dateisperre und schreibt
+        bei Erfolg eine Reservierung in die Protokolldatei.
 
         Returns:
-            (allowed, reason) — wenn allowed=False enthält reason die Ursache.
+            (allowed, reason, reservation_id)
+            — reservation_id ist leer wenn allowed=False.
+
+        Die Reservierung wird von record() in einen echten Eintrag
+        umgewandelt. Sie schützt das Budget auch gegen parallele Prozesse.
         """
+        # Schnell-Checks ohne I/O zuerst
         if self._calls_this_run >= self.max_calls_per_run:
             return False, (
                 f"Maximale Aufrufe pro Lauf erreicht ({self.max_calls_per_run})"
-            )
+            ), ""
         if estimated_cost_usd > self.max_cost_per_call:
             return False, (
                 f"Geschätzte Kosten pro Aufruf ({estimated_cost_usd:.4f} USD) "
                 f"überschreiten Limit ({self.max_cost_per_call:.4f} USD)"
-            )
-        stats = self._load_stats()
-        if stats["daily_usd"] + estimated_cost_usd > self.daily_budget:
-            return False, (
-                f"Tagesbudget würde überschritten "
-                f"({stats['daily_usd']:.4f} + {estimated_cost_usd:.4f} "
-                f"> {self.daily_budget:.4f} USD)"
-            )
-        if stats["monthly_usd"] + estimated_cost_usd > self.monthly_budget:
-            return False, (
-                f"Monatsbudget würde überschritten "
-                f"({stats['monthly_usd']:.4f} + {estimated_cost_usd:.4f} "
-                f"> {self.monthly_budget:.4f} USD)"
-            )
-        return True, ""
+            ), ""
+
+        try:
+            fh = self._open_log_locked()
+            try:
+                stats = self._read_stats_locked(fh)
+
+                if stats["daily_usd"] + estimated_cost_usd > self.daily_budget:
+                    return False, (
+                        f"Tagesbudget würde überschritten "
+                        f"({stats['daily_usd']:.4f} + {estimated_cost_usd:.4f} "
+                        f"> {self.daily_budget:.4f} USD)"
+                    ), ""
+                if stats["monthly_usd"] + estimated_cost_usd > self.monthly_budget:
+                    return False, (
+                        f"Monatsbudget würde überschritten "
+                        f"({stats['monthly_usd']:.4f} + {estimated_cost_usd:.4f} "
+                        f"> {self.monthly_budget:.4f} USD)"
+                    ), ""
+
+                # Budget OK — Reservierung schreiben (unter derselben Sperre)
+                reservation_id = str(uuid.uuid4())
+                reservation = {
+                    "type": self._RESERVATION_TYPE,
+                    "reservation_id": reservation_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "cost_usd": round(estimated_cost_usd, 6),
+                }
+                fh.seek(0, 2)  # ans Ende
+                fh.write(json.dumps(reservation, ensure_ascii=False) + "\n")
+                fh.flush()
+
+                self._reservations[reservation_id] = estimated_cost_usd
+                return True, "", reservation_id
+
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+                fh.close()
+
+        except OSError as exc:
+            logger.warning("Budget-Prüfung: Dateizugriff fehlgeschlagen: %s", exc)
+            # Im Fehlerfall konservativ ablehnen
+            return False, f"Budget-Datei nicht zugreifbar: {exc}", ""
 
     def record(self, project_id: str, model: str, cost_usd: float,
-               input_tokens: int, output_tokens: int) -> None:
-        """Protokolliert einen tatsächlichen API-Aufruf."""
+               input_tokens: int, output_tokens: int,
+               reservation_id: str = "") -> None:
+        """
+        Protokolliert einen tatsächlichen API-Aufruf.
+
+        Wenn reservation_id übergeben wird (aus check_and_reserve()),
+        wird der entsprechende Reservierungs-Eintrag im Log mit dem
+        tatsächlichen Kosten-Eintrag überschrieben (durch Neuschreiben
+        der Datei unter Sperre). Andernfalls wird ein neuer Eintrag
+        angehängt (Rückwärtskompatibilität).
+        """
         self._calls_this_run += 1
         self._cost_this_run += cost_usd
 
-        # Geladene Stats aktualisieren (damit weitere Prüfungen korrekt sind)
-        if self._loaded_stats is not None:
-            self._loaded_stats["daily_usd"] += cost_usd
-            self._loaded_stats["monthly_usd"] += cost_usd
+        # Reservierung aus lokalem Register entfernen
+        self._reservations.pop(reservation_id, None)
 
-        entry = {
+        actual_entry = {
+            "type": self._ACTUAL_TYPE,
+            "reservation_id": reservation_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "project_id": project_id,
             "model": model,
@@ -380,10 +514,48 @@ class BudgetTracker:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         }
+
         try:
             os.makedirs(self._log_path.parent, exist_ok=True)
-            with open(self._log_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            if reservation_id:
+                # Reservierungs-Eintrag ersetzen (unter Sperre)
+                fh = self._open_log_locked()
+                try:
+                    fh.seek(0)
+                    lines = fh.readlines()
+                    fh.seek(0)
+                    fh.truncate()
+                    replaced = False
+                    for line in lines:
+                        stripped = line.strip()
+                        if not stripped:
+                            fh.write(line)
+                            continue
+                        try:
+                            e = json.loads(stripped)
+                            if (e.get("type") == self._RESERVATION_TYPE
+                                    and e.get("reservation_id") == reservation_id):
+                                fh.write(
+                                    json.dumps(actual_entry, ensure_ascii=False) + "\n"
+                                )
+                                replaced = True
+                                continue
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        fh.write(line)
+                    if not replaced:
+                        # Reservierung nicht gefunden — anhängen
+                        fh.write(json.dumps(actual_entry, ensure_ascii=False) + "\n")
+                    fh.flush()
+                finally:
+                    fcntl.flock(fh, fcntl.LOCK_UN)
+                    fh.close()
+            else:
+                # Kein reservation_id — einfach anhängen (Rückwärtskompatibilität)
+                with open(self._log_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(actual_entry, ensure_ascii=False) + "\n")
+
         except OSError as exc:
             logger.warning("Kostenprotokoll konnte nicht geschrieben werden: %s", exc)
 
@@ -715,7 +887,10 @@ class LLMEvaluator:
             estimated_input_tokens, self._max_output_tokens
         )
 
-        budget_ok, budget_reason = self._budget.check_budget(estimated_cost)
+        # Atomare Budget-Prüfung + Reservierung (prozessübergreifend sicher)
+        budget_ok, budget_reason, reservation_id = self._budget.check_and_reserve(
+            estimated_cost
+        )
         if not budget_ok:
             logger.warning(
                 "Projekt %s: Budget-Limit — %s", project_id, budget_reason
@@ -733,6 +908,10 @@ class LLMEvaluator:
 
         if api_error:
             logger.error("Projekt %s: API-Fehler — %s", project_id, api_error)
+            # Reservierung bleibt erhalten (konservative Budgetverwaltung):
+            # Fehlgeschlagene Aufrufe können trotzdem Kosten verursacht haben
+            # (z. B. Timeout nach partieller Verarbeitung). Die Reservierung
+            # verfällt nach Prozessende — sie schützt vor erneuter Überschreitung.
             return self._error_result(
                 project_id, "pending_retry", api_error, now,
                 pii_replacements=scrub_result.total_replacements(),
@@ -773,12 +952,13 @@ class LLMEvaluator:
             pii_replacements=scrub_result.total_replacements(),
         )
 
-        # Cache und Budget-Protokoll
+        # Cache und Budget-Protokoll (Reservierung durch tatsächliche Kosten ersetzen)
         if self._cache_enabled:
             self._cache.put(cache_key, result)
         self._budget.record(
             project_id, self._model, actual_cost,
             actual_input_tokens, actual_output_tokens,
+            reservation_id=reservation_id,
         )
 
         logger.info(

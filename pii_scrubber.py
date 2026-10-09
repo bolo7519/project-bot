@@ -123,26 +123,56 @@ class ScrubResult:
     def is_safe_to_send(self) -> bool:
         """
         Prüft ob genug nutzbarer Inhalt nach dem Scrubbing verbleibt
-        UND ob keine offensichtlichen PII-Muster übrig geblieben sind.
+        UND ob keine erkennbaren PII-Muster übrig geblieben sind.
 
-        Zwei Bedingungen müssen erfüllt sein:
+        Vier Bedingungen müssen erfüllt sein:
         1. Mindestens MIN_USEFUL_CHARS Zeichen außerhalb der Platzhalter-Tags
-        2. Keine residualen E-Mail-Adressen im Text (Scrubbing vollständig)
+        2. Keine residualen E-Mail-Adressen (user@domain.tld)
+        3. Keine residualen Telefonnummern (DE/EU-Formate)
+        4. Keine residualen IBAN-Nummern (XX00 ...)
 
-        Hinweis: Diese Prüfung erkennt nur offensichtliche Residuen.
-        Sie ist eine Sicherheitsnetz-Prüfung, kein vollständiger PII-Scan.
+        Designentscheidung — Grenzen dieser Prüfung:
+        - Nur strukturelle Muster werden erkannt; semantische PII (z. B. Personen-
+          namen ohne Anrede, Steuer-IDs, Handelsregisternummern) ist nicht erkennbar.
+        - Diese Prüfung ist ein Sicherheitsnetz als letzte Verteidigungslinie,
+          kein vollständiger Datenschutz-Garant. Die primäre Schutzmaßnahme
+          ist das vorgelagerte Scrubbing durch PIIScrubber.scrub().
+        - Regex-Anonymisierung bietet keine vollständige Datenschutzgarantie
+          gemäß DSGVO; sie reduziert das Risiko der Übertragung erkennbarer
+          personenbezogener Daten an externe APIs erheblich, kann aber nicht
+          ausschließen, dass kontextuelle PII (z. B. eingebettete Namen in
+          Fließtext ohne Anrede) übersehen wird.
         """
         cleaned = re.sub(r'\[(?:EMAIL|PHONE|IBAN|NAME|SCRUBBED)\]', '', self.text)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
-        # Bedingung 1: Mindestlänge
+        # Bedingung 1: Mindestlänge nutzbarer Inhalt
         if len(cleaned) < MIN_USEFUL_CHARS:
             return False
 
-        # Bedingung 2: Keine residualen E-Mail-Adressen (einfachste/häufigste PII-Form)
-        # Wenn der Scrubber korrekt gearbeitet hat, dürfen keine @-Adressen mehr da sein.
-        # Wir prüfen nur auf strukturelle Muster — kein vollständiger PII-Scan.
+        # Bedingung 2: Keine residualen E-Mail-Adressen
         if re.search(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b', cleaned):
+            return False
+
+        # Bedingung 3: Keine residualen Telefonnummern (DE/EU-Formate)
+        # Dieselbe Regex wie _RE_PHONE im Scrubber — erkennt Nummern die
+        # der Scrubber hätte entfernen sollen aber möglicherweise übersehen hat.
+        if re.search(
+            r'(?:'
+            r'\+?\d{1,3}[\s\-.]?\(?\d{2,5}\)?[\s\-.]?\d{2,5}[\s\-.]?\d{2,5}'
+            r'|0\d{2,5}[\s\/\-]?\d{3,8}'
+            r')',
+            cleaned,
+        ):
+            return False
+
+        # Bedingung 4: Keine residualen IBAN-Nummern
+        # Prüft auf das typische Muster: 2 Buchstaben + 2 Ziffern + alphanumerische Blöcke
+        if re.search(
+            r'\b[A-Z]{2}\d{2}[\s]?[0-9A-Z]{4}[\s]?[0-9]{4}[\s]?[0-9]{4}',
+            cleaned,
+            re.IGNORECASE,
+        ):
             return False
 
         return True
