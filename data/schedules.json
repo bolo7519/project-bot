@@ -17,7 +17,7 @@
           "environment": null
         }
       ],
-      "cron_schedule": "\"0 9-17 * * 1-5\"",
+      "cron_schedule": "0 9-17 * * 1-5",
       "timezone": "Europe/Berlin",
       "created_at": "2025-09-27T11:06:43.263000",
       "updated_at": "2025-09-27T17:54:13.817412",
@@ -548,6 +548,31 @@
         "priority": "high",
         "category": "general"
       }
+    },
+    {
+      "id": "freelancermap-rss-auto",
+      "name": "FreelancerMap RSS Automatisch",
+      "description": "Automatischer RSS-Import von freelancermap.de (Mo-Fr alle 2h)",
+      "enabled": true,
+      "workflow_type": "cli_sequence",
+      "cli_commands": [
+        {
+          "command": "python main.py --rss-ingest --provider freelancermap --skip-evaluation",
+          "name": "FreelancerMap RSS",
+          "description": "RSS-Feed von freelancermap.de abrufen (ohne LLM-Bewertung)",
+          "timeout": 300,
+          "continue_on_error": false,
+          "retry_count": 0,
+          "environment": null
+        }
+      ],
+      "cron_schedule": "0 8,10,12,14,16 * * mon-fri",
+      "timezone": "Europe/Berlin",
+      "created_at": "2026-10-09T14:58:57.904678",
+      "updated_at": "2026-10-09T14:58:57.904758",
+      "last_run": null,
+      "last_status": null,
+      "execution_history": []
     }
   ],
   "last_updated": "2025-09-28T12:42:11.288835"

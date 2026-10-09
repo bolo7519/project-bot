@@ -411,8 +411,11 @@ class SchedulerManager:
                 self.scheduler.remove_job(job_id)
 
             # Create trigger
+            # Strip stray surrounding quotes that may have been written to
+            # schedules.json (e.g. "\"0 9 * * 1-5\"" → "0 9 * * 1-5")
+            cron_expr = schedule.cron_schedule.strip().strip('"').strip("'")
             trigger = CronTrigger.from_crontab(
-                schedule.cron_schedule,
+                cron_expr,
                 timezone=timezone(schedule.timezone)
             )
 
@@ -563,7 +566,9 @@ class SchedulerManager:
         """Validate cron schedule syntax"""
         try:
             from apscheduler.triggers.cron import CronTrigger
-            CronTrigger.from_crontab(cron_expr)
+            # Strip stray surrounding quotes (same normalisation as _add_schedule_to_scheduler)
+            normalized = cron_expr.strip().strip('"').strip("'")
+            CronTrigger.from_crontab(normalized)
             result.add_success("Cron schedule syntax is valid")
         except Exception as e:
             result.add_error(f"Invalid cron schedule '{cron_expr}': {e}")
