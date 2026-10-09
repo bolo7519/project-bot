@@ -551,15 +551,15 @@
     },
     {
       "id": "freelancermap-rss-auto",
-      "name": "FreelancerMap RSS Automatisch",
+      "name": "FreelancerMap RSS (Search Groups)",
       "description": "Automatischer RSS-Import von freelancermap.de (Mo-Fr alle 2h)",
       "enabled": true,
       "workflow_type": "cli_sequence",
       "cli_commands": [
         {
-          "command": "python main.py --rss-ingest --provider freelancermap --skip-evaluation",
-          "name": "FreelancerMap RSS",
-          "description": "RSS-Feed von freelancermap.de abrufen (ohne LLM-Bewertung)",
+          "command": "python run_search_groups_rss.py --groups automation_bi infra_security",
+          "name": "RSS Search Groups",
+          "description": "RSS-Ingest mit PreScoring für automation_bi + infra_security",
           "timeout": 300,
           "continue_on_error": false,
           "retry_count": 0,

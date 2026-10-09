@@ -1,0 +1,97 @@
+# search_groups_patch.yaml
+#
+# Diesen Block in config.yaml auf oberster Ebene einfügen:
+#
+#   cat search_groups_patch.yaml >> config.yaml
+#
+# ODER den Block manuell am Ende der config.yaml anhängen.
+#
+# Die Feed-URL muss mit dem Wert in providers.freelancermap.channels.rss.feed_urls
+# übereinstimmen (personalisierter Token bereits enthalten).
+#
+# Suchgruppen-IDs: automation_bi, infra_security  (Originalbezeichnungen aus
+# search_group_config.py — NICHT umbenennen)
+
+search_groups:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Gruppe 1: Automation & Business Intelligence
+  # Profile: ai_business_process_integration, crm_sales_automation,
+  #          power_bi_sharepoint
+  # ─────────────────────────────────────────────────────────────────────────
+  automation_bi:
+    display_name: "Automation & BI"
+    priority: 1
+    enabled: true
+    keywords:
+      - Automatisierung
+      - Prozessautomatisierung
+      - RPA
+      - Power Automate
+      - Power BI
+      - Business Intelligence
+      - Reporting
+      - Dashboard
+      - SharePoint
+      - Microsoft 365
+      - CRM
+      - Salesforce
+      - Dynamics 365
+      - LLM
+      - KI
+      - AI
+      - ChatGPT
+      - Copilot
+      - Azure OpenAI
+    providers:
+      freelancermap:
+        channels:
+          rss:
+            # Personalisierte Feed-URL — muss mit providers.freelancermap.channels.rss.feed_urls übereinstimmen
+            feed_urls:
+              - "https://www.freelancermap.de/feeds/projekte/de.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+            limit: 20
+            max_age_days: 7
+    schedule:
+      rss_interval_minutes: 120
+      email_interval_minutes: 60
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Gruppe 2: IT-Infrastruktur & Security
+  # Profile: it_infrastructure_security
+  # ─────────────────────────────────────────────────────────────────────────
+  infra_security:
+    display_name: "IT-Infrastruktur & Security"
+    priority: 2
+    enabled: true
+    keywords:
+      - Infrastruktur
+      - IT-Infrastruktur
+      - Active Directory
+      - Azure AD
+      - Entra ID
+      - Netzwerk
+      - Security
+      - IT-Sicherheit
+      - ISMS
+      - ISO 27001
+      - BSI
+      - NIS2
+      - Firewall
+      - VPN
+      - SIEM
+      - SOC
+      - Endpoint
+      - M365 Security
+      - Defender
+    providers:
+      freelancermap:
+        channels:
+          rss:
+            feed_urls:
+              - "https://www.freelancermap.de/feeds/projekte/de.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+            limit: 20
+            max_age_days: 7
+    schedule:
+      rss_interval_minutes: 120
+      email_interval_minutes: 60
