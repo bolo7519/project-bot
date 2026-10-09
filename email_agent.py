@@ -522,6 +522,15 @@ class EmailAgent:
 
         Returns:
             Dict with processing results: projects_saved, urls_skipped_dedupe
+
+        BEKANNTE LÜCKE (Phase 3):
+            Hard-Filter (FilterEngine) und TF-IDF-Vorbewertung (PreScorer) sind
+            ausschließlich in ``process_rss_entries()`` integriert. Der E-Mail-Pfad
+            (``run_email_ingestion_for_group()``) ruft ``process_email()`` auf und
+            übergibt dabei weder ``search_group_config`` noch einen ``PreScorer``.
+            Projekte, die per E-Mail einlaufen, durchlaufen daher in Phase 3 keinen
+            Hard-Filter und erhalten keinen Pre-Score. Die Lücke ist bewusst
+            akzeptiert und soll in einer späteren Phase geschlossen werden.
         """
         projects_saved = 0
         urls_skipped_dedupe = 0
@@ -1159,6 +1168,19 @@ class EmailAgent:
                                     ],
                                 },
                             )
+                            # Ablehnungsgründe persistent protokollieren —
+                            # das Projekt wird nicht als Datei angelegt, aber
+                            # FilterResult bleibt in filter_rejected.jsonl erhalten.
+                            if dispatcher is not None:
+                                dispatcher.log_rejected(
+                                    search_group_id=search_group_id,
+                                    provider_id=provider_config['provider_id'],
+                                    provider_url=url,
+                                    title=title,
+                                    channel='rss',
+                                    discovered_at=discovered_at,
+                                    filter_result_dict=filter_result_dict,
+                                )
                             continue
 
                     # ── Phase 3: TF-IDF-Vorbewertung ──────────────────────────

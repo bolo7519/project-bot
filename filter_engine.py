@@ -344,14 +344,51 @@ def _normalize_work_mode(text: str) -> Optional[str]:
     return None
 
 
+# Negationspräfixe, die einen Vertragstyp-Treffer ungültig machen.
+# "keine ANÜ" / "kein Freelance" → unbekannt statt ANÜ / Freelance.
+_NEGATION_RE = re.compile(
+    r"\b(kein(?:e|en|em|er|es)?|nicht|no\s|without|ohne|ausgeschlossen|"
+    r"nicht\s+vorgesehen|nicht\s+möglich)\s+",
+    re.IGNORECASE,
+)
+
+# Maximale Zeichenanzahl VOR dem Synonym, die nach einer Negation durchsucht wird.
+_NEGATION_WINDOW = 30
+
+
 def _normalize_contract_type(text: str) -> Optional[str]:
-    """Versucht den Vertragstyp aus Text zu bestimmen."""
+    """
+    Bestimmt den Vertragstyp aus freiem Text.
+
+    Negationsmuster ("keine ANÜ", "kein Freelance", "nicht als Festanstellung")
+    werden erkannt: Der Fund gilt in diesem Fall als *unbekannt* (None), damit
+    ein Projekt nicht fälschlicherweise wegen eines negierten Begriffs abgelehnt
+    wird.
+
+    Returns:
+        Kanonischer Vertragstyp ("freelance", "anue", "permanent")
+        oder None wenn unbekannt / negiert.
+    """
     lower = text.lower()
-    if lower in _CONTRACT_TYPE_SYNONYMS:
-        return _CONTRACT_TYPE_SYNONYMS[lower]
+
+    # Exakter Treffer zuerst (kein Negations-Check nötig bei exaktem Match
+    # des gesamten Strings — z.B. contract_type-Feld mit genau "freelance")
+    if lower.strip() in _CONTRACT_TYPE_SYNONYMS:
+        return _CONTRACT_TYPE_SYNONYMS[lower.strip()]
+
+    # Substring-Suche mit Negations-Check
     for synonym, canonical in _CONTRACT_TYPE_SYNONYMS.items():
-        if synonym in lower:
-            return canonical
+        pos = lower.find(synonym)
+        if pos == -1:
+            continue
+        # Prüfe, ob in einem Fenster VOR dem Treffer eine Negation steht
+        window_start = max(0, pos - _NEGATION_WINDOW)
+        window = lower[window_start:pos]
+        if _NEGATION_RE.search(window):
+            # Negierter Begriff → als unbekannt behandeln
+            continue
+        return canonical
+
     return None
 
 
