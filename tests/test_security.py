@@ -69,3 +69,27 @@ class TestServerSecurityFixes:
         assert "FLASK_DEBUG" in src, (
             "FLASK_DEBUG Umgebungsvariable fehlt – Debug-Modus muss über Env konfigurierbar sein"
         )
+
+    def test_flask_debug_default_is_disabled(self):
+        """Standard-Fallback für FLASK_DEBUG muss '0' sein (deaktiviert)."""
+        src = _read_server()
+        # Suche nach os.environ.get('FLASK_DEBUG', ...) oder os.environ.get("FLASK_DEBUG", ...)
+        import re
+        match = re.search(r"os\.environ\.get\(['\"]FLASK_DEBUG['\"],\s*['\"]([^'\"]*)['\"]", src)
+        assert match, "FLASK_DEBUG-Fallback-Wert nicht gefunden in server_enhanced.py"
+        default_val = match.group(1)
+        assert default_val == "0", (
+            f"FLASK_DEBUG-Standard ist '{default_val}' statt '0' – Debug-Modus wäre per Default aktiv"
+        )
+
+    def test_flask_host_default_is_loopback(self):
+        """Standard-Fallback für FLASK_HOST muss '127.0.0.1' (Loopback) sein."""
+        src = _read_server()
+        import re
+        match = re.search(r"os\.environ\.get\(['\"]FLASK_HOST['\"],\s*['\"]([^'\"]*)['\"]", src)
+        assert match, "FLASK_HOST-Fallback-Wert nicht gefunden in server_enhanced.py"
+        default_host = match.group(1)
+        assert default_host == "127.0.0.1", (
+            f"FLASK_HOST-Standard ist '{default_host}' statt '127.0.0.1' – "
+            "Dashboard wäre per Default auf allen Interfaces erreichbar"
+        )

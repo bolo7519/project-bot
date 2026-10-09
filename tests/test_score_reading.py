@@ -1,36 +1,23 @@
 """
-Tests für die Phase-0-Bugfix-Funktion read_llm_score_from_file() in main.py.
+Tests für read_llm_score_from_file() aus scores.py (Phase-0-Bugfix).
 
-Die Funktion wird direkt aus dem main.py-Quelltext via exec() geladen, um den
-kaputten Import von application_generator.py (veraltete LangChain-API) zu umgehen.
-Das ist ein bekanntes Problem aus Phase 0 (LangChain-Kompatibilität wird in Phase 1
-behoben). Solange der Import-Baum kaputt ist, testen wir die Funktion isoliert.
+Die Funktion wurde aus main.py in das eigenständige Modul scores.py ausgelagert,
+damit Tests sie direkt importieren können – ohne den kaputten Import-Baum von
+main.py (LangChain-Kompatibilität, Phase 1) zu berühren.
 """
 
-import re
 import pytest
 from pathlib import Path
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scores import read_llm_score_from_file  # Direkt aus Produktionsmodul
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 MAIN_PY = Path(__file__).parent.parent / "main.py"
-
-
-def _extract_function(source: str, func_name: str) -> str:
-    """Extrahiert eine einzelne Funktionsdefinition aus Python-Quelltext."""
-    pattern = rf'^(def {re.escape(func_name)}\b.*?)(?=\n^def |\n^class |\Z)'
-    match = re.search(pattern, source, re.MULTILINE | re.DOTALL)
-    if not match:
-        raise ValueError(f"Funktion '{func_name}' nicht in main.py gefunden")
-    return match.group(1)
-
-
-# Lade read_llm_score_from_file direkt aus dem Quelltext heraus
-_source = MAIN_PY.read_text(encoding="utf-8")
-_func_src = _extract_function(_source, "read_llm_score_from_file")
-_namespace: dict = {}
-exec(_func_src, _namespace)  # noqa: S102  (isolierter Test-Namespace, kein Produktionscode)
-read_llm_score_from_file = _namespace["read_llm_score_from_file"]
+SCORES_PY = Path(__file__).parent.parent / "scores.py"
 
 
 class TestReadLlmScoreFromFile:
@@ -84,14 +71,26 @@ Nur Beschreibung, keine Bewertung.
         score = read_llm_score_from_file(str(FIXTURE_DIR / "project_scraped.md"))
         assert score == 0
 
-    def test_function_exists_in_main_py(self):
-        """Sicherstellen, dass die Funktion noch in main.py vorhanden ist."""
-        assert "def read_llm_score_from_file" in _source, (
-            "read_llm_score_from_file fehlt in main.py"
+    def test_function_lives_in_scores_module(self):
+        """Sicherstellen, dass die Funktion in scores.py (nicht nur main.py) vorhanden ist."""
+        src = SCORES_PY.read_text(encoding="utf-8")
+        assert "def read_llm_score_from_file" in src, (
+            "read_llm_score_from_file fehlt in scores.py"
+        )
+
+    def test_main_py_imports_from_scores(self):
+        """main.py soll scores.read_llm_score_from_file importieren, nicht selbst definieren."""
+        src = MAIN_PY.read_text(encoding="utf-8")
+        assert "from scores import read_llm_score_from_file" in src, (
+            "main.py importiert read_llm_score_from_file nicht aus scores.py"
+        )
+        assert "def read_llm_score_from_file" not in src, (
+            "read_llm_score_from_file darf nicht mehr direkt in main.py definiert sein"
         )
 
     def test_no_hardcoded_95_in_main_py(self):
         """Regression: fit_score = 95 darf nicht mehr im main.py vorkommen."""
-        assert "fit_score = 95" not in _source, (
+        src = MAIN_PY.read_text(encoding="utf-8")
+        assert "fit_score = 95" not in src, (
             "fit_score = 95 ist noch hartcodiert in main.py – Phase-0-Fix fehlt"
         )
