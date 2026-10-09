@@ -76,6 +76,11 @@ class ProjectFilters(BaseModel):
     pre_eval_score_max: Optional[int] = None
     llm_score_min: Optional[int] = None
     llm_score_max: Optional[int] = None
+    # Phase 5: LLM-spezifische Filter
+    search_groups: List[str] = []       # Suchgruppen-Filter (z.B. ["crm_sales_automation"])
+    profile_ids: List[str] = []         # Kompetenzprofil-Filter
+    priority_labels: List[str] = []     # ["high", "medium", "low"]
+    evaluation_statuses: List[str] = [] # ["ok", "pending_retry", "failed", "unsafe_content", "not_evaluated"]
     page: int = 1
     page_size: int = 50
 
@@ -113,6 +118,11 @@ class DashboardStats(BaseModel):
     by_status: Dict[str, int]
     recent_activity: List[Dict[str, Any]]
     last_updated: str
+    # Phase 5: LLM-Stats
+    llm_evaluated: int = 0
+    llm_high_priority: int = 0
+    llm_pending: int = 0
+    llm_failed: int = 0
 
 class APIErrorResponse(BaseModel):
     error: str
@@ -400,6 +410,21 @@ def parse_project_file(file_path: str) -> Dict[str, Any]:
         # Extract latest scores from content (handle multiple evaluations)
         metadata["pre_eval_score"], metadata["llm_score"] = extract_latest_scores(content)
 
+        # Phase 5: LLM-Bewertungsdaten aus extra-Frontmatter-Feldern lesen
+        # Diese werden von evaluate_projects.py in record.extra gespeichert.
+        # SICHERHEIT: Kein roher Projekttext (E-Mail-Body) wird hier zurückgegeben.
+        extra = frontmatter.get("extra", {}) or {}
+        llm_eval = extra.get("llm_evaluation") or {}
+        metadata["llm_priority"] = extra.get("llm_priority")           # "high"|"medium"|"low"|None
+        metadata["evaluation_status"] = extra.get("evaluation_status") # "ok"|"pending_retry"|…|None
+        metadata["best_profile"] = llm_eval.get("best_profile")        # z.B. "crm_sales_automation"
+        metadata["best_score"] = llm_eval.get("best_score")            # 0–100
+        metadata["search_groups"] = frontmatter.get("search_groups", []) or []
+
+        # Detaillierte LLM-Bewertung (nur in Einzelabfrage; in Listenabfrage weglassen
+        # um Payload klein zu halten — wird durch include_llm_detail=True gesteuert)
+        metadata["llm_evaluation"] = llm_eval if llm_eval else None
+
         # Extract provider and channel metadata for UI display
         metadata["metadata"] = {
             "provider_id": frontmatter.get("provider_id"),
@@ -425,6 +450,12 @@ def parse_project_file(file_path: str) -> Dict[str, Any]:
             "posted_date": None,
             "pre_eval_score": None,
             "llm_score": None,
+            "llm_priority": None,
+            "evaluation_status": None,
+            "best_profile": None,
+            "best_score": None,
+            "search_groups": [],
+            "llm_evaluation": None,
             "metadata": {"error": str(e)}
         }
 
@@ -544,6 +575,34 @@ def get_projects_with_filters(filters: ProjectFilters) -> List[Dict[str, Any]]:
             logger.debug(f"❌ Project {project_id} filtered out by llm_score_max")
             continue
 
+        # Phase 5: Suchgruppen-Filter
+        if filters.search_groups:
+            proj_groups = set(project.get("search_groups") or [])
+            if not proj_groups.intersection(filters.search_groups):
+                logger.debug(f"❌ Project {project_id} filtered out by search_groups")
+                continue
+
+        # Phase 5: Kompetenzprofil-Filter (best_profile)
+        if filters.profile_ids:
+            best_profile = project.get("best_profile") or ""
+            if best_profile not in filters.profile_ids:
+                logger.debug(f"❌ Project {project_id} filtered out by profile_ids")
+                continue
+
+        # Phase 5: Prioritäts-Filter
+        if filters.priority_labels:
+            prio = project.get("llm_priority") or "not_evaluated"
+            if prio not in filters.priority_labels:
+                logger.debug(f"❌ Project {project_id} filtered out by priority_labels")
+                continue
+
+        # Phase 5: Evaluation-Status-Filter
+        if filters.evaluation_statuses:
+            eval_status = project.get("evaluation_status") or "not_evaluated"
+            if eval_status not in filters.evaluation_statuses:
+                logger.debug(f"❌ Project {project_id} filtered out by evaluation_statuses")
+                continue
+
         logger.debug(f"✅ Project {project_id} passed all filters")
         filtered_projects.append(project)
 
@@ -657,6 +716,11 @@ def get_projects():
             "pre_eval_score_max": int(request.args.get("pre_eval_score_max")) if request.args.get("pre_eval_score_max") else None,
             "llm_score_min": int(request.args.get("llm_score_min")) if request.args.get("llm_score_min") else None,
             "llm_score_max": int(request.args.get("llm_score_max")) if request.args.get("llm_score_max") else None,
+            # Phase 5: neue Filter
+            "search_groups": request.args.getlist("search_groups"),
+            "profile_ids": request.args.getlist("profile_ids"),
+            "priority_labels": request.args.getlist("priority_labels"),
+            "evaluation_statuses": request.args.getlist("evaluation_statuses"),
             "page": int(request.args.get("page", 1)),
             "page_size": int(request.args.get("page_size", 50))
         }
@@ -1189,10 +1253,28 @@ def get_dashboard_stats():
         # Calculate statistics
         status_counts = {}
         recent_activity = []
+        llm_evaluated = 0
+        llm_high_priority = 0
+        llm_pending = 0
+        llm_failed = 0
 
         for project in all_projects:
             status = project.get("status", "unknown")
             status_counts[status] = status_counts.get(status, 0) + 1
+
+            # Phase 5: LLM-Stats
+            eval_status = project.get("evaluation_status")
+            if eval_status == "ok":
+                llm_evaluated += 1
+            elif eval_status in ("pending_retry",):
+                llm_pending += 1
+            elif eval_status in ("failed", "unsafe_content"):
+                llm_failed += 1
+            # not_evaluated / None → nicht gezählt
+
+            prio = project.get("llm_priority")
+            if prio == "high":
+                llm_high_priority += 1
 
             # Get recent state changes
             state_history = project.get("state_history", [])
@@ -1213,7 +1295,11 @@ def get_dashboard_stats():
             total_projects=len(all_projects),
             by_status=status_counts,
             recent_activity=recent_activity,
-            last_updated=datetime.now().isoformat()
+            last_updated=datetime.now().isoformat(),
+            llm_evaluated=llm_evaluated,
+            llm_high_priority=llm_high_priority,
+            llm_pending=llm_pending,
+            llm_failed=llm_failed,
         )
 
         return jsonify(response.model_dump())
@@ -1236,9 +1322,140 @@ def health_check():
             "project_management",
             "state_transitions",
             "dashboard_analytics",
-            "workflow_execution"
+            "workflow_execution",
+            "llm_evaluation",   # Phase 4
+            "llm_dashboard",    # Phase 5
         ]
     })
+
+
+# ── Phase 5: LLM-Kosten-Endpunkt ─────────────────────────────────────────────
+
+@app.route('/api/v1/llm/costs', methods=['GET'])
+@handle_api_errors
+def get_llm_costs():
+    """
+    Gibt Budget-Verbrauch und API-Aufruf-Statistiken zurück.
+
+    Liest llm_cost_log.jsonl aus dem konfigurierten output_dir.
+    SICHERHEIT: Kein API-Schlüssel und keine Projektinhalte werden zurückgegeben.
+    """
+    import json as _json
+    from datetime import date as _date
+
+    log_path = Path("llm_cost_log.jsonl")
+    if not log_path.exists():
+        return jsonify({
+            "cost_today_usd": 0.0,
+            "cost_month_usd": 0.0,
+            "calls_total": 0,
+            "calls_today": 0,
+            "cache_hits": 0,
+            "log_entries": 0,
+            "last_updated": None,
+        })
+
+    today_str = _date.today().isoformat()
+    month_str = today_str[:7]  # "YYYY-MM"
+
+    cost_today = 0.0
+    cost_month = 0.0
+    calls_total = 0
+    calls_today = 0
+    cache_hits = 0
+    last_updated = None
+
+    try:
+        with open(log_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                # Nur type="actual" zählt (keine Reservierungen)
+                if entry.get("type") == "actual":
+                    calls_total += 1
+                    cost = float(entry.get("cost_usd", 0.0))
+                    ts = entry.get("timestamp", "")
+                    if ts.startswith(today_str):
+                        calls_today += 1
+                        cost_today += cost
+                    if ts.startswith(month_str):
+                        cost_month += cost
+                    if entry.get("cache_hit"):
+                        cache_hits += 1
+                    if ts > (last_updated or ""):
+                        last_updated = ts
+
+        return jsonify({
+            "cost_today_usd": round(cost_today, 6),
+            "cost_month_usd": round(cost_month, 6),
+            "calls_total": calls_total,
+            "calls_today": calls_today,
+            "cache_hits": cache_hits,
+            "log_entries": calls_total,
+            "last_updated": last_updated,
+        })
+
+    except Exception as e:
+        logger.error("Fehler beim Lesen von llm_cost_log: %s", e)
+        raise
+
+
+# ── Phase 5: Undo-State-Endpunkt ──────────────────────────────────────────────
+
+@app.route('/api/v1/projects/<project_id>/undo_state', methods=['POST'])
+@handle_api_errors
+def undo_project_state(project_id: str):
+    """
+    Setzt den Projektzustand auf den vorherigen Zustand in der State-History zurück.
+
+    SICHERHEIT: Nur schreibende Aktion via POST; kein automatischer Versand.
+    """
+    projects_dir = Path("projects")
+    project_file = projects_dir / f"{project_id}.md"
+
+    if not project_file.exists():
+        return jsonify({"error": "not_found", "message": f"Project {project_id} not found"}), 404
+
+    frontmatter, body = state_manager.read_project(str(project_file))
+    history = frontmatter.get("state_history", [])
+
+    # Mindestens zwei Einträge nötig um zurückzugehen
+    if len(history) < 2:
+        return jsonify({
+            "error": "no_previous_state",
+            "message": "Kein vorheriger Zustand verfügbar"
+        }), 400
+
+    # Letzten Eintrag entfernen, vorletzten als neuen Zustand setzen
+    previous_entry = history[-2]
+    previous_state = previous_entry.get("state", "scraped")
+    current_state = frontmatter.get("state", "unknown")
+
+    # Neuen History-Eintrag anhängen
+    history.append({
+        "state": previous_state,
+        "timestamp": datetime.now().isoformat(),
+        "note": f"Rückgängig: {current_state} → {previous_state}",
+        "override": True,
+        "ui_context": True,
+    })
+
+    frontmatter["state"] = previous_state
+    frontmatter["state_history"] = history
+    state_manager.write_project(str(project_file), frontmatter, body)
+
+    logger.info("Undo-State: %s %s → %s", project_id, current_state, previous_state)
+    return jsonify({
+        "project_id": project_id,
+        "previous_state": current_state,
+        "new_state": previous_state,
+    })
+
 
 # API Endpoints for Quick Filters
 

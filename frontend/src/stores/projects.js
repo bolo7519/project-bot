@@ -16,6 +16,11 @@ export const useProjectsStore = defineStore('projects', {
       pre_eval_score_max: null,
       llm_score_min: null,
       llm_score_max: null,
+      // Phase 5: LLM-Filter
+      search_groups: [],
+      profile_ids: [],
+      priority_labels: [],
+      evaluation_statuses: [],
       page: 1,
       page_size: 300
     },
@@ -73,6 +78,19 @@ export const useProjectsStore = defineStore('projects', {
         if (this.filters.pre_eval_score_max !== null) params.append('pre_eval_score_max', this.filters.pre_eval_score_max)
         if (this.filters.llm_score_min !== null) params.append('llm_score_min', this.filters.llm_score_min)
         if (this.filters.llm_score_max !== null) params.append('llm_score_max', this.filters.llm_score_max)
+        // Phase 5: LLM-Filter
+        if (this.filters.search_groups?.length > 0) {
+          this.filters.search_groups.forEach(g => params.append('search_groups', g))
+        }
+        if (this.filters.profile_ids?.length > 0) {
+          this.filters.profile_ids.forEach(p => params.append('profile_ids', p))
+        }
+        if (this.filters.priority_labels?.length > 0) {
+          this.filters.priority_labels.forEach(l => params.append('priority_labels', l))
+        }
+        if (this.filters.evaluation_statuses?.length > 0) {
+          this.filters.evaluation_statuses.forEach(s => params.append('evaluation_statuses', s))
+        }
         if (this.filters.page !== 1) params.append('page', this.filters.page)
         params.append('page_size', this.filters.page_size)
 
@@ -239,6 +257,11 @@ export const useProjectsStore = defineStore('projects', {
         pre_eval_score_max: null,
         llm_score_min: null,
         llm_score_max: null,
+        // Phase 5: LLM-Filter
+        search_groups: [],
+        profile_ids: [],
+        priority_labels: [],
+        evaluation_statuses: [],
         page: 1,
         page_size: 300
       }

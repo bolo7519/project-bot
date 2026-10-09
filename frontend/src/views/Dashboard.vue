@@ -46,6 +46,32 @@
         </div>
       </div>
 
+      <!-- LLM Stats -->
+      <div v-if="hasLLMStats" class="llm-stats-section">
+        <div class="llm-stats-header">🤖 KI-Bewertung</div>
+        <div class="llm-stats-grid">
+          <div class="llm-stat-card llm-stat-evaluated clickable" @click="filterByEvalStatus('ok')">
+            <div class="llm-stat-number">{{ llmStats.llm_evaluated }}</div>
+            <div class="llm-stat-label">KI-bewertet</div>
+          </div>
+          <div class="llm-stat-card llm-stat-high clickable" @click="filterByPriority('high')">
+            <div class="llm-stat-number">{{ llmStats.llm_high_priority }}</div>
+            <div class="llm-stat-label">High Priority</div>
+          </div>
+          <div class="llm-stat-card llm-stat-pending clickable" @click="filterByEvalStatus('pending_retry')">
+            <div class="llm-stat-number">{{ llmStats.llm_pending }}</div>
+            <div class="llm-stat-label">Ausstehend</div>
+          </div>
+          <div class="llm-stat-card llm-stat-failed clickable" @click="filterByEvalStatus('failed')">
+            <div class="llm-stat-number">{{ llmStats.llm_failed }}</div>
+            <div class="llm-stat-label">Fehler</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KI-Kostenübersicht -->
+      <LLMCostSummary />
+
       <!-- Named Workflows -->
       <WorkflowButtons
         @workflow-started="handleWorkflowStarted"
@@ -121,6 +147,7 @@ import ProjectFilters from '../components/ProjectFilters.vue'
 import ProjectTable from '../components/ProjectTable.vue'
 import ProjectDetailsModal from '../components/ProjectDetailsModal.vue'
 import ProjectActions from '../components/ProjectActions.vue'
+import LLMCostSummary from '../components/LLMCostSummary.vue'
 import logoImage from '../assets/project-bot.png'
 
 // Router
@@ -162,6 +189,16 @@ const totalProjects = computed(() => {
   return total
 })
 const statsByStatus = computed(() => projectsStore.stats.by_status || {})
+const llmStats = computed(() => ({
+  llm_evaluated: projectsStore.stats.llm_evaluated || 0,
+  llm_high_priority: projectsStore.stats.llm_high_priority || 0,
+  llm_pending: projectsStore.stats.llm_pending || 0,
+  llm_failed: projectsStore.stats.llm_failed || 0,
+}))
+const hasLLMStats = computed(() => {
+  const s = llmStats.value
+  return (s.llm_evaluated + s.llm_high_priority + s.llm_pending + s.llm_failed) > 0
+})
 
 // Methods
 const handleFiltersChanged = async (filters) => {
@@ -254,6 +291,26 @@ const handleDeleteProject = async (projectId) => {
     console.error('Failed to delete project:', error);
   }
 };
+
+const filterByEvalStatus = async (evalStatus) => {
+  try {
+    projectsStore.resetFilters()
+    projectsStore.setFilters({ evaluation_statuses: [evalStatus], page: 1 })
+    await projectsStore.fetchProjects()
+  } catch (error) {
+    console.error('Failed to filter by eval status:', error)
+  }
+}
+
+const filterByPriority = async (priority) => {
+  try {
+    projectsStore.resetFilters()
+    projectsStore.setFilters({ priority_labels: [priority], page: 1 })
+    await projectsStore.fetchProjects()
+  } catch (error) {
+    console.error('Failed to filter by priority:', error)
+  }
+}
 
 const filterByStatus = async (status) => {
   console.log('Filtering by status:', status);
@@ -775,6 +832,61 @@ onMounted(() => {
   color: #9ca3af;
   white-space: nowrap;
 }
+
+/* LLM Stats */
+.llm-stats-section {
+  background: white;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.llm-stats-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.llm-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.llm-stat-card {
+  text-align: center;
+  padding: 0.5rem 0.25rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.llm-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.llm-stat-number {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.llm-stat-label {
+  font-size: 0.68rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-stat-evaluated  { background: #e0f2fe; border-color: #38bdf8; }
+.llm-stat-high       { background: #dcfce7; border-color: #4ade80; }
+.llm-stat-pending    { background: #fffbeb; border-color: #facc15; }
+.llm-stat-failed     { background: #fef2f2; border-color: #f87171; }
 
 /* Large screen optimization */
 @media (min-width: 1440px) {

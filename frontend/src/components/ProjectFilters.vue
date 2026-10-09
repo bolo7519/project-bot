@@ -157,6 +157,43 @@
         </div>
       </div>
 
+      <!-- Phase 5: LLM-Filter -->
+      <div class="filter-group">
+        <label class="filter-label">KI-Bewertung</label>
+        <div class="checkbox-grid">
+          <label class="checkbox-label">
+            <input type="checkbox" value="high" v-model="localFilters.priority_labels" @change="applyFilters" />
+            <span class="checkbox-text prio-high-text">🟢 High Priority</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" value="medium" v-model="localFilters.priority_labels" @change="applyFilters" />
+            <span class="checkbox-text">🟡 Medium</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" value="low" v-model="localFilters.priority_labels" @change="applyFilters" />
+            <span class="checkbox-text">⚪ Low</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Bewertungsstatus</label>
+        <div class="checkbox-grid">
+          <label class="checkbox-label">
+            <input type="checkbox" value="ok" v-model="localFilters.evaluation_statuses" @change="applyFilters" />
+            <span class="checkbox-text">✅ Bewertet</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" value="pending_retry" v-model="localFilters.evaluation_statuses" @change="applyFilters" />
+            <span class="checkbox-text">⏸ Ausstehend</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" value="failed" v-model="localFilters.evaluation_statuses" @change="applyFilters" />
+            <span class="checkbox-text">❌ Fehler</span>
+          </label>
+        </div>
+      </div>
+
       <!-- Date Range -->
       <div class="filter-group">
         <label class="filter-label">Date Range</label>
@@ -331,6 +368,11 @@ const localFilters = ref({
   pre_eval_score_max: null,
   llm_score_min: null,
   llm_score_max: null,
+  // Phase 5: LLM-Filter
+  search_groups: [],
+  profile_ids: [],
+  priority_labels: [],
+  evaluation_statuses: [],
   page: 1,
   page_size: 300
 })
@@ -353,7 +395,9 @@ const hasActiveFilters = computed(() => {
           localFilters.value.pre_eval_score_min !== null ||
           localFilters.value.pre_eval_score_max !== null ||
           localFilters.value.llm_score_min !== null ||
-          localFilters.value.llm_score_max !== null
+          localFilters.value.llm_score_max !== null ||
+          localFilters.value.priority_labels.length > 0 ||
+          localFilters.value.evaluation_statuses.length > 0
 })
 
 // Watch for store changes
@@ -393,6 +437,11 @@ const resetFilters = () => {
     pre_eval_score_max: null,
     llm_score_min: null,
     llm_score_max: null,
+    // Phase 5
+    search_groups: [],
+    profile_ids: [],
+    priority_labels: [],
+    evaluation_statuses: [],
     page: 1,
     page_size: 300
   }
