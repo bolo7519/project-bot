@@ -1,0 +1,141 @@
+# Testkonfiguration mit zwei Suchgruppen — keine echten Zugangsdaten
+# Wird von tests/test_search_groups.py verwendet.
+
+settings:
+  acceptance_threshold: 85
+  pre_eval_threshold: 30
+  max_projects_per_run: 10
+  output_dir: projects
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  api_key: "test-key-not-real"
+
+cv_file: data/cv.md
+
+# Globale IMAP/SMTP-Einstellungen (werden von den Suchgruppen geerbt)
+channels:
+  email:
+    server: "mail.example.com"
+    port: 993
+    username: "projects@example.com"
+    password_env: "MAIL_PASSWORD"
+    use_ssl: true
+    examine_only: true          # EXAMINE statt SELECT — keine Zustandsänderung
+    use_body_peek: true         # BODY.PEEK[] statt RFC822
+  rss:
+    default_limit: 10
+    max_age_days: 7
+
+# Provider-Defaults (globale Fallbacks; durch search_groups überschreibbar)
+providers:
+  freelancermap:
+    enabled: true
+  gulp:
+    enabled: true
+
+# ─── Suchgruppen ─────────────────────────────────────────────────────────────
+# Jede Suchgruppe hat eigene Feed-URLs, Mail-Filter, Keywords, Priorität und
+# Zeitpläne. Weitere Gruppen können ohne Codeänderung hinzugefügt werden.
+
+search_groups:
+
+  automation_bi:
+    display_name: "Automation & BI"
+    priority: 1
+    enabled: true
+    keywords:
+      - "make.com"
+      - "n8n"
+      - "power automate"
+      - "power bi"
+      - "tableau"
+      - "rpa"
+      - "automatisierung"
+      - "bi developer"
+      - "data engineer"
+
+    providers:
+      freelancermap:
+        channels:
+          rss:
+            feed_urls:
+              - "https://www.freelancermap.de/rss/projektboerse.xml?query=automation"
+              - "https://www.freelancermap.de/rss/projektboerse.xml?query=power+bi"
+            max_age_days: 7
+            limit: 20
+          email:
+            senders:
+              - "newsletter@freelancermap.de"
+              - "projekte@freelancermap.de"
+            subject_patterns:
+              - "(?i)automation"
+              - "(?i)power\\s*bi"
+              - "(?i)rpa"
+              - "(?i)make\\.com"
+            body_url_patterns:
+              - "https://www\\.freelancermap\\.de/projekt/\\d+"
+            max_urls_per_email: 30
+
+      gulp:
+        channels:
+          rss:
+            feed_urls:
+              - "https://www.gulp.de/gulp2/rss/projekte.xml?q=automation"
+            max_age_days: 7
+            limit: 10
+
+    schedule:
+      rss_interval_minutes: 60
+      email_interval_minutes: 30
+
+  infra_security:
+    display_name: "Infrastructure & Security"
+    priority: 2
+    enabled: true
+    keywords:
+      - "kubernetes"
+      - "docker"
+      - "devops"
+      - "siem"
+      - "soc"
+      - "penetration test"
+      - "iso 27001"
+      - "netzwerk"
+      - "firewall"
+      - "cisco"
+
+    providers:
+      freelancermap:
+        channels:
+          rss:
+            feed_urls:
+              - "https://www.freelancermap.de/rss/projektboerse.xml?query=kubernetes"
+              - "https://www.freelancermap.de/rss/projektboerse.xml?query=security"
+            max_age_days: 7
+            limit: 20
+          email:
+            senders:
+              - "newsletter@freelancermap.de"
+              - "projekte@freelancermap.de"
+            subject_patterns:
+              - "(?i)kubernetes"
+              - "(?i)devops"
+              - "(?i)security"
+              - "(?i)siem"
+            body_url_patterns:
+              - "https://www\\.freelancermap\\.de/projekt/\\d+"
+            max_urls_per_email: 30
+
+      gulp:
+        channels:
+          rss:
+            feed_urls:
+              - "https://www.gulp.de/gulp2/rss/projekte.xml?q=devops"
+            max_age_days: 7
+            limit: 10
+
+    schedule:
+      rss_interval_minutes: 90
+      email_interval_minutes: 45
