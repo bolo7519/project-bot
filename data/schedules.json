@@ -557,7 +557,7 @@
       "workflow_type": "cli_sequence",
       "cli_commands": [
         {
-          "command": "python run_search_groups_rss.py --groups automation_bi infra_security",
+          "command": "python3 run_search_groups_rss.py --groups automation_bi infra_security",
           "name": "RSS Search Groups",
           "description": "RSS-Ingest mit PreScoring für automation_bi + infra_security",
           "timeout": 300,
