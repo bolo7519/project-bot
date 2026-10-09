@@ -22,6 +22,8 @@ from utils.filename import create_safe_filename
 from dedupe_service import DedupeService
 from markdown_renderer import MarkdownRenderer
 from search_group_dispatcher import SearchGroupDispatcher, DispatchResult
+from filter_engine import FilterEngine, filter_config_from_search_group
+from pre_scorer import PreScorer
 import importlib
 
 logger = logging.getLogger(__name__)
@@ -520,6 +522,15 @@ class EmailAgent:
 
         Returns:
             Dict with processing results: projects_saved, urls_skipped_dedupe
+
+        BEKANNTE LÜCKE (Phase 3):
+            Hard-Filter (FilterEngine) und TF-IDF-Vorbewertung (PreScorer) sind
+            ausschließlich in ``process_rss_entries()`` integriert. Der E-Mail-Pfad
+            (``run_email_ingestion_for_group()``) ruft ``process_email()`` auf und
+            übergibt dabei weder ``search_group_config`` noch einen ``PreScorer``.
+            Projekte, die per E-Mail einlaufen, durchlaufen daher in Phase 3 keinen
+            Hard-Filter und erhalten keinen Pre-Score. Die Lücke ist bewusst
+            akzeptiert und soll in einer späteren Phase geschlossen werden.
         """
         projects_saved = 0
         urls_skipped_dedupe = 0
@@ -1054,6 +1065,8 @@ class EmailAgent:
         provider_config: Dict[str, Any],
         output_dir: str,
         search_group_id: str = None,
+        search_group_config=None,  # SearchGroupConfig | None (Phase 3)
+        _pre_scorer: "PreScorer | None" = None,  # injizierbar für Tests
     ) -> Dict[str, int]:
         """
         Process RSS feed entries into projects.
@@ -1066,12 +1079,17 @@ class EmailAgent:
                              through SearchGroupDispatcher (Phase 2 path) for proper
                              search group stamping and cross-group deduplication.
                              When None, uses the legacy direct-write path (backward compat).
+            search_group_config: Optional SearchGroupConfig (Phase 3). Wenn übergeben,
+                                 wird der Hard-Filter und die TF-IDF-Vorbewertung aktiviert.
+            _pre_scorer: Optionaler PreScorer (für Tests injizierbar).
 
         Returns:
-            Dict with processing results: projects_saved, urls_skipped_dedupe
+            Dict with processing results: projects_saved, urls_skipped_dedupe,
+            und Phase 3: projects_filtered (Hard-Filter abgelehnt).
         """
         projects_saved = 0
         urls_skipped_dedupe = 0
+        projects_filtered = 0  # Phase 3: vom Hard-Filter abgelehnt
 
         # Initialize services
         dedupe_service = DedupeService(output_dir)
@@ -1080,6 +1098,27 @@ class EmailAgent:
 
         # Phase 2: dispatcher used when search_group_id is given
         dispatcher = SearchGroupDispatcher(output_dir, dedupe_service) if search_group_id else None
+
+        # Phase 3: FilterEngine + PreScorer (nur im Phase-2-Pfad mit search_group_config)
+        filter_engine: "FilterEngine | None" = None
+        pre_scorer: "PreScorer | None" = _pre_scorer
+        if dispatcher is not None and search_group_config is not None:
+            try:
+                filter_cfg = filter_config_from_search_group(search_group_config)
+                filter_engine = FilterEngine(filter_cfg)
+            except Exception as exc:
+                self.logger.warning(
+                    "FilterEngine konnte nicht initialisiert werden — Filter deaktiviert",
+                    extra={"error": str(exc)},
+                )
+            if pre_scorer is None:
+                try:
+                    pre_scorer = PreScorer()
+                except Exception as exc:
+                    self.logger.warning(
+                        "PreScorer konnte nicht initialisiert werden — Pre-Scoring deaktiviert",
+                        extra={"error": str(exc)},
+                    )
 
         for entry in entries:
             try:
@@ -1112,6 +1151,57 @@ class EmailAgent:
                     title = schema.get('title', 'project')
                     discovered_at = datetime.now().isoformat()
 
+                    # ── Phase 3: Hard-Filter ───────────────────────────────────
+                    filter_result_dict: Dict[str, Any] = {}
+                    if filter_engine is not None:
+                        filter_result = filter_engine.apply(schema, search_group_id)
+                        filter_result_dict = filter_result.to_dict()
+                        if not filter_result.passed:
+                            projects_filtered += 1
+                            self.logger.info(
+                                "Projekt durch Hard-Filter abgelehnt",
+                                extra={
+                                    "url": url,
+                                    "search_group_id": search_group_id,
+                                    "filter_checks": [
+                                        c.criterion for c in filter_result.checks if not c.passed
+                                    ],
+                                },
+                            )
+                            # Ablehnungsgründe persistent protokollieren —
+                            # das Projekt wird nicht als Datei angelegt, aber
+                            # FilterResult bleibt in filter_rejected.jsonl erhalten.
+                            if dispatcher is not None:
+                                dispatcher.log_rejected(
+                                    search_group_id=search_group_id,
+                                    provider_id=provider_config['provider_id'],
+                                    provider_url=url,
+                                    title=title,
+                                    channel='rss',
+                                    discovered_at=discovered_at,
+                                    filter_result_dict=filter_result_dict,
+                                )
+                            continue
+
+                    # ── Phase 3: TF-IDF-Vorbewertung ──────────────────────────
+                    pre_score_dict: Dict[str, Any] = {}
+                    if pre_scorer is not None:
+                        try:
+                            pre_score_result = pre_scorer.score_project(schema)
+                            pre_score_dict = pre_score_result.to_dict()
+                        except Exception as exc:
+                            self.logger.warning(
+                                "Pre-Scoring fehlgeschlagen",
+                                extra={"url": url, "error": str(exc)},
+                            )
+
+                    # ── Phase 3: Ergebnisse in extra_metadata bündeln ──────────
+                    phase3_extra: Dict[str, Any] = {}
+                    if filter_result_dict:
+                        phase3_extra["filter_results"] = {search_group_id: filter_result_dict}
+                    if pre_score_dict:
+                        phase3_extra["pre_scores"] = pre_score_dict
+
                     result = dispatcher.dispatch(
                         search_group_id=search_group_id,
                         provider_id=provider_config['provider_id'],
@@ -1120,6 +1210,7 @@ class EmailAgent:
                         markdown_content=markdown_content,
                         channel='rss',
                         discovered_at=discovered_at,
+                        extra_metadata=phase3_extra if phase3_extra else None,
                     )
 
                     if result.action == DispatchResult.ACTION_CREATED:
@@ -1217,12 +1308,14 @@ class EmailAgent:
             'entries_processed': len(entries),
             'projects_saved': projects_saved,
             'urls_skipped_dedupe': urls_skipped_dedupe,
+            'projects_filtered': projects_filtered,
             'search_group_id': search_group_id,
         })
 
         return {
             'projects_saved': projects_saved,
             'urls_skipped_dedupe': urls_skipped_dedupe,
+            'projects_filtered': projects_filtered,
         }
 
     def run_rss_ingestion(self, provider_id: str, output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
@@ -1564,11 +1657,15 @@ class EmailAgent:
                     provider_config,
                     output_dir,
                     search_group_id=group_id,
+                    search_group_config=group_config,  # Phase 3: Filter + PreScoring
                 )
                 provider_summary['projects_saved'] = result['projects_saved']
                 provider_summary['urls_skipped_dedupe'] = result['urls_skipped_dedupe']
+                provider_summary['projects_filtered'] = result.get('projects_filtered', 0)
                 summary['projects_saved'] += result['projects_saved']
                 summary['urls_skipped_dedupe'] += result['urls_skipped_dedupe']
+                summary.setdefault('projects_filtered', 0)
+                summary['projects_filtered'] += result.get('projects_filtered', 0)
 
             summary['provider_summaries'][provider_id] = provider_summary
 

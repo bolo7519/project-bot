@@ -90,6 +90,25 @@ search_groups:
       rss_interval_minutes: 60
       email_interval_minutes: 30
 
+    # Phase 3: Hard-Filter für diese Suchgruppe
+    filters:
+      contract_type:
+        allowed: [freelance]
+        reject_if_unknown: false
+      work_mode:
+        allowed: [remote, hybrid]
+        reject_if_unknown: false
+      rate:
+        min_hourly: 70
+        reject_if_unknown: false
+      language:
+        allowed: [de, en]
+        reject_if_unknown: false
+      exclude_terms:
+        - "Festanstellung"
+        - "ANÜ"
+        - "Arbeitnehmerüberlassung"
+
   infra_security:
     display_name: "Infrastructure & Security"
     priority: 2
@@ -139,3 +158,21 @@ search_groups:
     schedule:
       rss_interval_minutes: 90
       email_interval_minutes: 45
+
+    # Phase 3: Hard-Filter (strenger als automation_bi)
+    filters:
+      contract_type:
+        allowed: [freelance]
+        reject_if_unknown: false
+      work_mode:
+        allowed: [remote, hybrid, onsite]
+        reject_if_unknown: false
+      rate:
+        min_hourly: 80
+        reject_if_unknown: false
+      language:
+        allowed: [de, en]
+        reject_if_unknown: false
+      exclude_terms:
+        - "Festanstellung"
+        - "ANÜ"

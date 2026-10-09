@@ -207,6 +207,69 @@ class SearchGroupDispatcher:
             url=provider_url,
         )
 
+    def log_rejected(
+        self,
+        *,
+        search_group_id: str,
+        provider_id: str,
+        provider_url: str,
+        title: str,
+        channel: str = "rss",
+        discovered_at: Optional[str] = None,
+        filter_result_dict: Dict[str, Any],
+    ) -> None:
+        """
+        Protokolliert ein durch den Hard-Filter abgelehntes Projekt.
+
+        Das Projekt wird NICHT als Datei angelegt und nicht an den Dispatcher
+        übergeben. Stattdessen wird der Ablehnungseintrag an
+        ``{output_dir}/filter_rejected.jsonl`` angehängt (eine JSON-Zeile pro
+        Ablehnung). So bleiben Filterentscheid und Ablehnungsgründe persistent
+        nachvollziehbar.
+
+        Args:
+            search_group_id: Bezeichner der Suchgruppe.
+            provider_id: Quellenbezeichner.
+            provider_url: URL des abgelehnten Projekts.
+            title: Projekttitel.
+            channel: "rss" oder "email".
+            discovered_at: ISO-8601-Zeitstempel; default: jetzt (UTC).
+            filter_result_dict: Serialisiertes FilterResult (aus FilterResult.to_dict()).
+        """
+        import json as _json
+
+        if discovered_at is None:
+            discovered_at = datetime.now(timezone.utc).isoformat()
+
+        entry = {
+            "search_group_id": search_group_id,
+            "provider_id": provider_id,
+            "provider_url": provider_url,
+            "title": title,
+            "channel": channel,
+            "discovered_at": discovered_at,
+            "filter_result": filter_result_dict,
+        }
+
+        log_path = os.path.join(self.output_dir, "filter_rejected.jsonl")
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+            logger.info(
+                "Abgelehntes Projekt protokolliert",
+                extra={
+                    "search_group_id": search_group_id,
+                    "provider_url": provider_url,
+                    "log_path": log_path,
+                },
+            )
+        except OSError as exc:
+            logger.warning(
+                "Konnte filter_rejected.jsonl nicht schreiben",
+                extra={"log_path": log_path, "error": str(exc)},
+            )
+
     # ── private Hilfsmethoden ──────────────────────────────────────────────────
 
     def _find_existing_file(self, project_id: str) -> Optional[str]:
