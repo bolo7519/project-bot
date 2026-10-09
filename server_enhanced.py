@@ -4,7 +4,7 @@ Enhanced Flask Backend for Vue3 Frontend
 Backend-for-Frontend Pattern with REST API
 """
 
-from flask import Flask, jsonify, request, send_from_directory, Response, send_file
+from flask import Flask, jsonify, request, send_from_directory, Response, send_file, abort
 from flask_cors import CORS
 import subprocess
 import os

@@ -906,6 +906,13 @@ class SchedulerManager:
         try:
             # Parse command
             cmd_parts = shlex.split(cmd_step.command)
+
+            # Replace bare 'python' / 'python3' with the interpreter that is
+            # running the server — ensures the correct venv is used even when
+            # launchd's PATH does not include the venv bin directory.
+            if cmd_parts and cmd_parts[0] in ('python', 'python3'):
+                cmd_parts[0] = sys.executable
+
             working_dir = os.path.dirname(os.path.abspath(__file__))
 
             # Prepare environment
