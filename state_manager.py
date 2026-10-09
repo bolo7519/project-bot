@@ -30,12 +30,13 @@ class ProjectStateManager:
     """
 
     VALID_STATES = {
-        'scraped', 'rejected', 'accepted',
+        'scraped', 'evaluated', 'rejected', 'accepted',
         'applied', 'sent', 'open', 'archived'
     }
 
     VALID_TRANSITIONS = {
-        'scraped': ['rejected', 'accepted'],  # Direct evaluation result
+        'scraped': ['evaluated', 'rejected', 'accepted'],  # Phase 4: scraped → evaluated
+        'evaluated': ['accepted', 'rejected'],             # Phase 4: nach LLM-Bewertung
         'rejected': ['accepted', 'applied', 'archived'],  # Allow re-application
         'accepted': ['applied', 'rejected'],  # Can still reject
         'applied': ['sent', 'archived', 'open'],  # More flexible
