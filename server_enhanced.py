@@ -1752,15 +1752,17 @@ def get_schedule_runs(schedule_id: str):
     # Convert execution history to response format
     history = []
     for result in schedule.execution_history:
-        history.append({
+        entry = {
             "run_id": result.run_id,
             "started_at": result.started_at,
             "completed_at": result.completed_at,
             "status": result.status,
             "output": result.output,
             "error": result.error,
-            "exit_code": result.exit_code
-        })
+            "exit_code": result.exit_code,
+            "step_results": result.step_results or []
+        }
+        history.append(entry)
 
     return jsonify(history)
 

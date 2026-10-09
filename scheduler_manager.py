@@ -870,7 +870,14 @@ class SchedulerManager:
                     self._save_schedules()
                     return
 
-            # All steps completed successfully
+            # All steps completed successfully — aggregate step results
+            if result.step_results:
+                last = result.step_results[-1]
+                result.exit_code = last.get('exit_code')
+                result.output = "\n---\n".join(
+                    s.get('output', '') for s in result.step_results
+                    if s.get('output', '').strip()
+                )
             result.status = "success"
             result.completed_at = datetime.now().isoformat()
             schedule.last_status = "success"
