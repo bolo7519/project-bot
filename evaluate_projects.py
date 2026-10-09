@@ -602,7 +602,40 @@ Examples:
     parser.add_argument('--projects-dir', default='projects', help="Directory containing projects to process (default: 'projects')")
     parser.add_argument('--pre-eval-only', action='store_true', help='Run only the pre-evaluation scoring without calling the LLM.')
     parser.add_argument('--force-evaluation', action='store_true', help='Force evaluation by skipping pre-evaluation phase.')
+    parser.add_argument(
+        '--phase4', action='store_true',
+        help=(
+            'Phase-4-Modus: LLM-Bewertung aller Projekte im Zustand "scraped" gegen '
+            'alle vier Kompetenzprofile. Kein CV-Vergleich, keine automatische '
+            'Statusänderung zu accepted/rejected, kein E-Mail-Versand.'
+        ),
+    )
+    parser.add_argument(
+        '--dry-run', action='store_true',
+        help='Phase 4: Simuliert Lauf ohne echte API-Aufrufe.',
+    )
     args = parser.parse_args()
+
+    # ── Phase-4-Modus ────────────────────────────────────────────────────────
+    if getattr(args, 'phase4', False):
+        from llm_evaluator import run_evaluation_pass
+        output_dir = args.projects_dir
+        logger.info("Phase-4-Modus gestartet (LLM-Bewertung, kein CV-Vergleich)")
+        print("Phase 4: LLM-Bewertung läuft …")
+        config = load_config(args.config)
+        if not config:
+            print("Fatal: Konfiguration konnte nicht geladen werden.")
+            return
+        summary = run_evaluation_pass(
+            config=config,
+            output_dir=output_dir,
+            projects_dir=args.projects_dir,
+            dry_run=getattr(args, 'dry_run', False),
+        )
+        print("Phase 4 abgeschlossen:")
+        for k, v in summary.items():
+            print(f"  {k}: {v}")
+        return
 
     logger.debug(f"📋 Arguments: config={args.config}, cv={args.cv}, project_file={args.project_file}")
     logger.debug(f"🎯 Flags: pre_eval_only={args.pre_eval_only}, force_evaluation={args.force_evaluation}")
