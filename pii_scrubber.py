@@ -122,13 +122,30 @@ class ScrubResult:
 
     def is_safe_to_send(self) -> bool:
         """
-        Prüft ob genug nutzbarer Inhalt nach dem Scrubbing verbleibt.
+        Prüft ob genug nutzbarer Inhalt nach dem Scrubbing verbleibt
+        UND ob keine offensichtlichen PII-Muster übrig geblieben sind.
 
-        Zählt nur Zeichen außerhalb der Platzhalter-Tags.
+        Zwei Bedingungen müssen erfüllt sein:
+        1. Mindestens MIN_USEFUL_CHARS Zeichen außerhalb der Platzhalter-Tags
+        2. Keine residualen E-Mail-Adressen im Text (Scrubbing vollständig)
+
+        Hinweis: Diese Prüfung erkennt nur offensichtliche Residuen.
+        Sie ist eine Sicherheitsnetz-Prüfung, kein vollständiger PII-Scan.
         """
         cleaned = re.sub(r'\[(?:EMAIL|PHONE|IBAN|NAME|SCRUBBED)\]', '', self.text)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        return len(cleaned) >= MIN_USEFUL_CHARS
+
+        # Bedingung 1: Mindestlänge
+        if len(cleaned) < MIN_USEFUL_CHARS:
+            return False
+
+        # Bedingung 2: Keine residualen E-Mail-Adressen (einfachste/häufigste PII-Form)
+        # Wenn der Scrubber korrekt gearbeitet hat, dürfen keine @-Adressen mehr da sein.
+        # Wir prüfen nur auf strukturelle Muster — kein vollständiger PII-Scan.
+        if re.search(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b', cleaned):
+            return False
+
+        return True
 
 
 # ──────────────────────────────────────────────────────────────────────────────

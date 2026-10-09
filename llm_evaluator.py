@@ -1109,9 +1109,22 @@ def run_evaluation_pass(
         high_t = int(eval_cfg.get("high_priority_threshold", 65))
         low_t = int(eval_cfg.get("low_priority_threshold", 35))
 
+        # Bestehende Felder erhalten (z.B. filter_results, pre_scores aus Phase 3)
+        # llm_evaluation immer als ganzes ersetzen (neues Ergebnis)
         record.extra["llm_evaluation"] = result.to_dict()
         record.extra["llm_priority"] = result.priority_label(high_t, low_t)
         record.extra["evaluation_status"] = result.evaluation_status
+
+        # State-Übergang: nur bei erfolgreicher Bewertung auf 'evaluated'
+        # Bei pending_retry/failed/unsafe_content bleibt der Zustand 'scraped'
+        # damit der Lauf beim nächsten Mal erneut versucht werden kann.
+        if result.evaluation_status == "ok":
+            record.state = "evaluated"
+            record.state_history.append({
+                "state": "evaluated",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "note": f"LLM-Bewertung: best_profile={result.best_profile} score={result.best_score}",
+            })
 
         state_manager.write_project_record(project_path, record, body)
 

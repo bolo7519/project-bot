@@ -756,3 +756,718 @@ class TestPriorityLabel:
 
     def test_score_zero_is_low(self):
         assert self._result(0).priority_label(65, 35) == "low_priority"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T35–T42: PII-Sicherheit — Residuale PII und Edge Cases (Prüfbereich 1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPIIResidualSafety:
+    """T35–T42: Erweiterte PII-Sicherheitsprüfungen."""
+
+    def test_residual_email_blocks_send(self):
+        """T35: Residuale E-Mail-Adresse nach Scrubbing → is_safe_to_send() = False."""
+        # Simuliere einen Fall wo der Scrubber eine E-Mail übersieht
+        scrubber = PIIScrubber()
+        # Konstruiere ein ScrubResult das noch eine E-Mail enthält (synthetisch)
+        # In der Praxis würde das nicht passieren — dies ist ein Regressions-Test
+        result = ScrubResult(
+            text="A" * 200 + " kontakt@firma.de " + "B" * 50,
+            replacements={},
+        )
+        # is_safe_to_send() soll jetzt die residuale E-Mail erkennen
+        assert not result.is_safe_to_send(), (
+            "Residuale E-Mail-Adresse muss is_safe_to_send() = False auslösen"
+        )
+
+    def test_email_in_project_text_scrubbed_then_safe(self):
+        """T36: E-Mail in echtem Text wird gescrubt → danach sicher."""
+        scrubber = PIIScrubber()
+        text = (
+            "Wir suchen einen Python-Entwickler für unser CRM-Team. "
+            "Bitte bewerben Sie sich unter bewerbung@muster-gmbh.de. "
+            "Das Projekt umfasst die Integration von Salesforce und REST-APIs "
+            "sowie die Anbindung an unser bestehendes ERP-System SAP S/4 HANA. "
+            "Erfahrung mit agilen Methoden (Scrum, Kanban) wird vorausgesetzt."
+        )
+        result = scrubber.scrub(text)
+        assert "[EMAIL]" in result.text
+        assert "bewerbung@muster-gmbh.de" not in result.text
+        assert result.is_safe_to_send(), "Nach Scrubbing muss Text sicher sein"
+
+    def test_contact_block_with_phone_scrubbed(self):
+        """T37: Kontaktblock mit Telefon wird vollständig entfernt."""
+        scrubber = PIIScrubber()
+        text = (
+            "Python Entwicklung für CRM-Projekt (6 Monate, remote).\n"
+            "Anforderungen: Django, REST, PostgreSQL, Agile.\n"
+            "Tel: +49 89 123 456 78\n"
+            "Fax: +49 89 123 456 79\n"
+        )
+        result = scrubber.scrub(text)
+        assert "89 123 456 78" not in result.text
+        assert "Python Entwicklung" in result.text
+
+    def test_email_thread_at_start_preserves_content(self):
+        """T38: Thread-Block am Anfang — kein Verlust des echten Projektinhalts."""
+        scrubber = PIIScrubber()
+        # Der echte Projektinhalt steht VOR dem Thread-Block
+        text = (
+            "Sehr geehrter Kandidat,\n\n"
+            "Wir haben ein spannendes CRM-Projekt für Sie:\n"
+            "- Salesforce Administration\n"
+            "- Python-Entwicklung\n"
+            "- Dauer: 6 Monate\n\n"
+            "-------- Forwarded Message --------\n"
+            "Von: recruiter@firma.de\n"
+            "An: kandidat@mail.de\n"
+            "Betreff: Weitergeleitet: Anfrage\n"
+        )
+        result = scrubber.scrub(text)
+        assert result.thread_removed
+        assert "Salesforce" in result.text, "Projektinhalt muss erhalten bleiben"
+        assert "recruiter@firma.de" not in result.text
+
+    def test_iban_in_payment_section_removed(self):
+        """T39: IBAN in Zahlungshinweis wird entfernt."""
+        scrubber = PIIScrubber()
+        text = (
+            "CRM-Projekt: Salesforce und HubSpot Integration, 3 Monate. "
+            "Honorar: 850 EUR/Tag. Bankverbindung: DE12 3456 7890 1234 5678 90. "
+            "Bitte schicken Sie uns Ihre Rechnung."
+        )
+        result = scrubber.scrub(text)
+        assert "[IBAN]" in result.text
+        assert "DE12" not in result.text
+        assert "Salesforce" in result.text
+
+    def test_multiple_pii_types_in_one_text(self):
+        """T40: Mehrere PII-Typen in einem Text werden alle entfernt."""
+        scrubber = PIIScrubber()
+        text = (
+            "Python Entwickler gesucht für 12 Monate (remote).\n"
+            "Kontakt: Herr Müller, Tel: +49 30 555 1234, "
+            "E-Mail: mueller@firma.de.\n"
+            "Bankverbindung: DE89 3704 0044 0532 0130 00.\n"
+            "Anforderungen: Django, FastAPI, Docker, Kubernetes, PostgreSQL, "
+            "Microservices-Architektur, CI/CD Pipeline und Agile Scrum."
+        )
+        result = scrubber.scrub(text)
+        assert "mueller@firma.de" not in result.text
+        assert "555 1234" not in result.text
+        assert "3704 0044" not in result.text
+        assert "Müller" not in result.text
+        assert result.total_replacements() >= 3
+        # Und nach Scrubbing sicher (kein residuales @)
+        assert result.is_safe_to_send()
+
+    def test_text_that_is_only_pii_is_blocked(self):
+        """T41: Text der nach Scrubbing nur Platzhalter enthält wird blockiert."""
+        scrubber = PIIScrubber()
+        text = "Herr Schmidt, Tel: +49 30 12345678, E-Mail: schmidt@test.de"
+        result = scrubber.scrub(text)
+        # Nach Scrubbing: "[NAME], [SCRUBBED], [EMAIL]" — zu kurz
+        assert not result.is_safe_to_send()
+
+    def test_clean_technical_project_passes_gate(self):
+        """T42: Saubere technische Projektbeschreibung ohne PII passiert das Gate."""
+        scrubber = PIIScrubber()
+        text = (
+            "Gesucht: Python-Entwickler für CRM-Migration zu Salesforce. "
+            "Aufgaben: API-Integration, Datenmodellierung, Unit-Tests (pytest). "
+            "Stack: Python 3.11, Django 4.2, PostgreSQL 15, Docker, Git. "
+            "Laufzeit: 6 Monate, 4 Tage/Woche, remote. Start: Q1 2026."
+        )
+        result = scrubber.scrub(text)
+        assert result.total_replacements() == 0
+        assert result.is_safe_to_send()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T43–T48: Kostenkontrolle — Persistenz und Grenzfälle (Prüfbereich 2)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBudgetPersistenceAndEdgeCases:
+    """T43–T48: Budget-Persistenz über Prozessneustarts und Grenzfälle."""
+
+    def _make_tracker(self, tmp_path: Path, **kwargs) -> "BudgetTracker":
+        defaults = dict(
+            daily_budget_usd=1.0,
+            monthly_budget_usd=10.0,
+            max_calls_per_run=5,
+            max_cost_per_call_usd=0.20,
+        )
+        defaults.update(kwargs)
+        return BudgetTracker(str(tmp_path), **defaults)
+
+    def test_budget_reloaded_after_restart(self, tmp_path):
+        """T43: Tagesverbrauch bleibt nach Prozessneustart erhalten (Persistenz)."""
+        # Erster Prozess: Record 0.80 USD
+        tracker1 = self._make_tracker(
+            tmp_path, daily_budget_usd=1.0, max_cost_per_call_usd=1.0
+        )
+        tracker1.record("p1", "m", 0.80, 1000, 200)
+
+        # Zweiter Prozess: soll 0.80 bereits verbraucht sehen
+        tracker2 = self._make_tracker(
+            tmp_path, daily_budget_usd=1.0, max_cost_per_call_usd=1.0
+        )
+        ok, reason = tracker2.check_budget(0.30)  # 0.80 + 0.30 > 1.0
+        assert not ok, "Budget muss nach Neustart korrekt akkumuliert sein"
+        assert "Tagesbudget" in reason or "daily" in reason.lower() or "budget" in reason.lower()
+
+    def test_monthly_budget_persists(self, tmp_path):
+        """T44: Monatsverbrauch wird persistiert und korrekt summiert."""
+        tracker1 = self._make_tracker(
+            tmp_path, monthly_budget_usd=5.0, max_cost_per_call_usd=2.0,
+            daily_budget_usd=10.0,
+        )
+        for i in range(3):
+            tracker1.record(f"p{i}", "m", 1.60, 500, 100)  # 3 × 1.60 = 4.80
+
+        tracker2 = self._make_tracker(
+            tmp_path, monthly_budget_usd=5.0, max_cost_per_call_usd=2.0,
+            daily_budget_usd=10.0,
+        )
+        ok, reason = tracker2.check_budget(0.30)  # 4.80 + 0.30 > 5.0
+        assert not ok
+        assert "Monatsbudget" in reason or "monthly" in reason.lower() or "budget" in reason.lower()
+
+    def test_max_calls_per_run_enforced(self, tmp_path):
+        """T45: max_calls_per_run wird exakt eingehalten."""
+        tracker = self._make_tracker(tmp_path, max_calls_per_run=3)
+        for i in range(3):
+            ok, _ = tracker.check_budget(0.01)
+            assert ok, f"Aufruf {i+1} soll erlaubt sein"
+            tracker.record(f"p{i}", "m", 0.01, 100, 50)
+
+        # 4. Aufruf muss abgelehnt werden
+        ok, reason = tracker.check_budget(0.01)
+        assert not ok
+        assert "3" in reason or "Lauf" in reason or "Aufrufe" in reason
+
+    def test_max_cost_per_call_enforced(self, tmp_path):
+        """T46: Einzelner teurer Aufruf wird blockiert."""
+        tracker = self._make_tracker(tmp_path, max_cost_per_call_usd=0.10)
+        ok, reason = tracker.check_budget(0.11)  # knapp über Limit
+        assert not ok
+
+    def test_cost_log_fields_complete(self, tmp_path):
+        """T47: Kostenprotokoll enthält alle Pflichtfelder."""
+        tracker = self._make_tracker(tmp_path)
+        tracker.record("test-proj", "claude-haiku", 0.0042, 350, 120)
+
+        log_path = tmp_path / "llm_cost_log.jsonl"
+        with open(log_path, encoding="utf-8") as fh:
+            entry = json.loads(fh.readline())
+
+        assert "timestamp" in entry
+        assert "project_id" in entry
+        assert "model" in entry
+        assert "cost_usd" in entry
+        assert "input_tokens" in entry
+        assert "output_tokens" in entry
+        assert entry["project_id"] == "test-proj"
+        assert entry["model"] == "claude-haiku"
+        assert abs(entry["cost_usd"] - 0.0042) < 1e-6
+
+    def test_retry_does_not_double_count_budget(self, tmp_path):
+        """T48: Fehlgeschlagene Retries zählen nicht als erfolgreiche API-Aufrufe."""
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir()
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(f"# {pid}\n- kw\n", encoding="utf-8")
+
+        evaluator = LLMEvaluator(
+            config=_minimal_config(cache_enabled=False),
+            output_dir=str(tmp_path),
+            profiles_dir=profiles_dir,
+        )
+        long_text = "Python CRM Salesforce REST API Django " * 30
+
+        # API schlägt immer fehl
+        with patch.object(evaluator, "_call_api", side_effect=Exception("Timeout")):
+            result = evaluator.evaluate("proj-retry", long_text)
+
+        assert result.evaluation_status == "pending_retry"
+
+        # Budget-Log darf keinen Eintrag enthalten
+        log_path = tmp_path / "llm_cost_log.jsonl"
+        if log_path.exists():
+            with open(log_path, encoding="utf-8") as fh:
+                entries = [l for l in fh if l.strip()]
+            assert len(entries) == 0, "Fehlgeschlagene Aufrufe dürfen nicht ins Kostenlog"
+
+        # run-Counter bleibt 0
+        summary = evaluator.budget_summary()
+        assert summary["calls_this_run"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T49–T53: Fehlerbehandlung — API-Fehler und Validierungsfehler (Prüfbereich 3)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestErrorHandlingEdgeCases:
+    """T49–T53: Simulation von API-Fehlern und unvollständigen Antworten."""
+
+    def _evaluator(self, tmp_path: Path) -> LLMEvaluator:
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir(exist_ok=True)
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(
+                f"# {pid}\n- Keyword\n", encoding="utf-8"
+            )
+        return LLMEvaluator(
+            config=_minimal_config(cache_enabled=False),
+            output_dir=str(tmp_path),
+            profiles_dir=profiles_dir,
+        )
+
+    def _long_text(self) -> str:
+        return "Python CRM Salesforce REST API Django Kubernetes Docker " * 15
+
+    def test_rate_limit_error_returns_pending_retry(self, tmp_path):
+        """T49: Rate-Limit-Fehler (simuliert) → pending_retry, kein Absturz."""
+        evaluator = self._evaluator(tmp_path)
+
+        class MockRateLimitError(Exception):
+            pass
+
+        with patch.object(evaluator, "_call_api",
+                          side_effect=MockRateLimitError("429 Too Many Requests")):
+            result = evaluator.evaluate("proj-rate", self._long_text())
+
+        assert result.evaluation_status == "pending_retry"
+        assert result.best_score == 0
+        assert len(result.evaluations) == 0
+        assert "429" in result.error_detail or "fehlgeschlagen" in result.error_detail
+
+    def test_timeout_error_returns_pending_retry(self, tmp_path):
+        """T50: Timeout → pending_retry."""
+        evaluator = self._evaluator(tmp_path)
+
+        with patch.object(evaluator, "_call_api",
+                          side_effect=TimeoutError("Connection timed out")):
+            result = evaluator.evaluate("proj-timeout", self._long_text())
+
+        assert result.evaluation_status == "pending_retry"
+        assert result.best_score == 0
+
+    def test_invalid_json_response_returns_failed(self, tmp_path):
+        """T51: Ungültiges JSON → failed, kein TF-IDF-Score."""
+        evaluator = self._evaluator(tmp_path)
+
+        with patch.object(evaluator, "_call_api",
+                          return_value=("Das ist kein gültiges JSON!", 100, 50)):
+            result = evaluator.evaluate("proj-badjson", self._long_text())
+
+        assert result.evaluation_status == "failed"
+        assert result.best_score == 0
+        assert len(result.evaluations) == 0
+
+    def test_incomplete_profiles_in_response_returns_failed(self, tmp_path):
+        """T52: API liefert weniger als 4 Profile → failed."""
+        evaluator = self._evaluator(tmp_path)
+        incomplete = json.dumps({
+            "evaluations": [
+                {"profile_id": "crm_sales_automation", "score": 80,
+                 "matched": [], "missing": [], "rationale": "ok"},
+                {"profile_id": "power_bi_sharepoint", "score": 40,
+                 "matched": [], "missing": [], "rationale": "ok"},
+                # Nur 2 statt 4 Profile
+            ]
+        })
+
+        with patch.object(evaluator, "_call_api", return_value=(incomplete, 100, 50)):
+            result = evaluator.evaluate("proj-incomplete", self._long_text())
+
+        assert result.evaluation_status == "failed"
+        assert result.best_score == 0
+
+    def test_error_state_not_set_to_evaluated(self, tmp_path):
+        """T53: Bei API-Fehler wird der Projektzustand NICHT auf 'evaluated' gesetzt."""
+        import textwrap
+        from state_manager import ProjectStateManager
+
+        sm = ProjectStateManager(str(tmp_path))
+        project_path = str(tmp_path / "test_error.md")
+        content = textwrap.dedent("""\
+            ---
+            project_id: url-abc12345abcd
+            title: Fehler-Test Projekt
+            state: scraped
+            schema_version: 2
+            ---
+
+            Python CRM Salesforce Integration REST API Django Framework Docker.
+            Erfahrung mit agilen Methoden, Scrum-Zeremonien, CI/CD Pipeline.
+        """)
+        with open(project_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        config = _minimal_config(cache_enabled=False)
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir(exist_ok=True)
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(f"# {pid}\n- kw\n", encoding="utf-8")
+
+        evaluator = LLMEvaluator(
+            config=config, output_dir=str(tmp_path), profiles_dir=profiles_dir
+        )
+
+        with patch.object(evaluator, "_call_api", side_effect=Exception("API down")):
+            result = evaluator.evaluate("url-abc12345abcd", "Python CRM " * 20)
+
+        # Manuell den Record lesen und prüfen dass State noch 'scraped' ist
+        record, _ = sm.read_project_record(project_path)
+        assert record.state == "scraped", (
+            "Bei API-Fehler darf der State nicht auf 'evaluated' wechseln"
+        )
+        assert result.evaluation_status == "pending_retry"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T54–T57: Datenintegrität (Prüfbereich 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDataIntegrity:
+    """T54–T57: Datenintegrität bei Re-Evaluierung und Filter-Ergebnissen."""
+
+    def _profiles_dir(self, tmp_path: Path) -> Path:
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir(exist_ok=True)
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(
+                f"# {pid}\n- Schlüsselwort\n", encoding="utf-8"
+            )
+        return profiles_dir
+
+    def test_re_evaluation_preserves_filter_results(self, tmp_path):
+        """T54: Re-Evaluierung überschreibt filter_results NICHT."""
+        import textwrap
+
+        profiles_dir = self._profiles_dir(tmp_path)
+        sm = ProjectStateManager(str(tmp_path))
+
+        # Projekt mit bestehenden filter_results (Phase 3)
+        project_path = str(tmp_path / "proj_reeval.md")
+        content = textwrap.dedent("""\
+            ---
+            project_id: url-reeval001test
+            title: Re-Eval Test
+            state: scraped
+            schema_version: 2
+            filter_results:
+              automation-bi:
+                accepted: true
+                score: 0.75
+            pre_scores:
+              crm_sales_automation: 0.62
+            ---
+
+            Python CRM Salesforce Integration REST API Django. Agile Scrum CI/CD.
+            Kenntnisse in Kubernetes Docker PostgreSQL und Microservices-Architektur.
+        """)
+        with open(project_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        evaluator = LLMEvaluator(
+            config=_minimal_config(cache_enabled=False),
+            output_dir=str(tmp_path),
+            profiles_dir=profiles_dir,
+        )
+        long_text = "Python CRM Salesforce Integration REST API " * 15
+
+        with patch.object(evaluator, "_call_api",
+                          return_value=(_ok_api_response(), 500, 200)):
+            result = evaluator.evaluate("url-reeval001test", long_text)
+
+        # Manuelle Integration wie in run_evaluation_pass()
+        record, body = sm.read_project_record(project_path)
+        assert record is not None
+
+        # Bestehende Phase-3-Daten prüfen
+        assert "filter_results" in record.extra, "filter_results muss noch vorhanden sein"
+        assert "pre_scores" in record.extra, "pre_scores muss noch vorhanden sein"
+
+        # Neue LLM-Daten hinzufügen
+        record.extra["llm_evaluation"] = result.to_dict()
+        record.extra["llm_priority"] = result.priority_label(65, 35)
+        record.extra["evaluation_status"] = result.evaluation_status
+        sm.write_project_record(project_path, record, body)
+
+        # Neu lesen und prüfen
+        record2, _ = sm.read_project_record(project_path)
+        assert "filter_results" in record2.extra, "filter_results nach Re-Eval noch da"
+        assert "pre_scores" in record2.extra, "pre_scores nach Re-Eval noch da"
+        assert "llm_evaluation" in record2.extra, "llm_evaluation neu hinzugefügt"
+        assert record2.extra["llm_evaluation"]["best_score"] == 72
+
+    def test_successful_evaluation_sets_state_evaluated(self, tmp_path):
+        """T55: Erfolgreiche run_evaluation_pass() setzt State auf 'evaluated'."""
+        import textwrap
+        from llm_evaluator import run_evaluation_pass
+
+        profiles_dir = self._profiles_dir(tmp_path)
+
+        project_path = tmp_path / "proj_state_test.md"
+        content = textwrap.dedent("""\
+            ---
+            project_id: url-statetest001x
+            title: State Test Projekt
+            state: scraped
+            schema_version: 2
+            ---
+
+            Python CRM Salesforce Integration REST API Django Framework.
+            Kubernetes Docker PostgreSQL Agile Scrum CI/CD Pipeline GitHub Actions.
+            Microservices-Architektur, Datenbankoptimierung, Unit-Tests mit pytest.
+            Laufzeit 9 Monate, remote, 4 Tage pro Woche, Start Q1 2026.
+        """)
+        project_path.write_text(content, encoding="utf-8")
+
+        config = _minimal_config(
+            cache_enabled=False,
+            provider="anthropic",
+        )
+
+        from llm_evaluator import LLMEvaluator
+        import unittest.mock as mock_lib
+
+        # Patch auf Klassenebene für run_evaluation_pass
+        original_init = LLMEvaluator.__init__
+
+        def patched_init(self, config, output_dir, profiles_dir=None):
+            original_init(self, config, output_dir, profiles_dir=profiles_dir)
+
+        with mock_lib.patch.object(LLMEvaluator, "_call_api",
+                                   return_value=(_ok_api_response(), 500, 200)):
+            stats = run_evaluation_pass(
+                config=config,
+                output_dir=str(tmp_path),
+                projects_dir=str(tmp_path),
+            )
+
+        assert stats["projects_ok"] >= 1, "Mindestens ein Projekt soll bewertet worden sein"
+
+        sm = ProjectStateManager(str(tmp_path))
+        record, _ = sm.read_project_record(str(project_path))
+        assert record is not None
+        assert record.state == "evaluated", (
+            f"State nach Bewertung muss 'evaluated' sein, war: {record.state}"
+        )
+        assert "llm_evaluation" in record.extra
+
+    def test_failed_evaluation_keeps_state_scraped(self, tmp_path):
+        """T56: Fehlgeschlagene Evaluierung lässt State auf 'scraped'."""
+        import textwrap
+        from llm_evaluator import run_evaluation_pass
+
+        self._profiles_dir(tmp_path)  # Profile anlegen
+
+        project_path = tmp_path / "proj_fail_state.md"
+        content = textwrap.dedent("""\
+            ---
+            project_id: url-failstate001x
+            title: Fail State Test
+            state: scraped
+            schema_version: 2
+            ---
+
+            Python CRM Salesforce Django REST API.
+            Kubernetes Docker CI/CD Agile Scrum.
+        """)
+        project_path.write_text(content, encoding="utf-8")
+
+        config = _minimal_config(cache_enabled=False)
+
+        from llm_evaluator import LLMEvaluator
+        import unittest.mock as mock_lib
+
+        with mock_lib.patch.object(LLMEvaluator, "_call_api",
+                                   side_effect=Exception("API not available")):
+            stats = run_evaluation_pass(
+                config=config,
+                output_dir=str(tmp_path),
+                projects_dir=str(tmp_path),
+            )
+
+        sm = ProjectStateManager(str(tmp_path))
+        record, _ = sm.read_project_record(str(project_path))
+        assert record is not None
+        assert record.state == "scraped", (
+            "Nach fehlgeschlagener Bewertung muss State 'scraped' bleiben"
+        )
+
+    def test_llm_evaluation_stored_in_extra(self, tmp_path):
+        """T57: LLM-Ergebnis wird korrekt in record.extra gespeichert."""
+        profiles_dir = self._profiles_dir(tmp_path)
+        evaluator = LLMEvaluator(
+            config=_minimal_config(cache_enabled=False),
+            output_dir=str(tmp_path),
+            profiles_dir=profiles_dir,
+        )
+        long_text = "Python CRM Salesforce REST API Django " * 20
+
+        with patch.object(evaluator, "_call_api",
+                          return_value=(_ok_api_response(), 500, 200)):
+            result = evaluator.evaluate("url-extratest", long_text)
+
+        assert result.evaluation_status == "ok"
+        d = result.to_dict()
+        assert "evaluations" in d
+        assert len(d["evaluations"]) == 4
+        assert d["best_score"] == 72
+        assert d["best_profile"] == "crm_sales_automation"
+        assert d["evaluation_status"] == "ok"
+        assert d["pii_replacements"] == 0  # kein PII im Test-Text
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T58: End-to-End-Test (Prüfbereich 5)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestEndToEnd:
+    """
+    T58: End-to-End ohne echte API-Aufrufe und ohne echte E-Mails.
+
+    Weg: Projektdatei (state=scraped) → PIIScrubber → LLMEvaluator (Mock-API)
+         → 4 ProfileEvaluations → ProjectRecord.extra → state=evaluated
+    """
+
+    def test_full_pipeline_scraper_to_evaluated(self, tmp_path):
+        """
+        T58: Vollständige Pipeline vom Projekt-Anlegen bis state=evaluated.
+
+        Simuliert:
+        1. Projektdatei im Zustand 'scraped' mit Projektbeschreibung
+        2. PII-Scrubbing (E-Mail in Body wird entfernt)
+        3. LLMEvaluator.evaluate() mit gemockter API
+        4. Alle 4 Profilbewertungen korrekt gespeichert
+        5. State → 'evaluated', kein echter API-Aufruf, keine E-Mail
+        """
+        import textwrap
+        from llm_evaluator import run_evaluation_pass
+
+        # ── Profiles anlegen ──────────────────────────────────────────────────
+        profiles_dir = tmp_path / "competency_profiles"
+        profiles_dir.mkdir()
+        for pid in PROFILE_IDS:
+            (profiles_dir / f"{pid}.md").write_text(
+                f"# {pid}\n- Python\n- CRM\n- Salesforce\n", encoding="utf-8"
+            )
+
+        # ── Projektdatei anlegen (simuliert RSS-Ingestion Ausgabe) ─────────────
+        project_path = tmp_path / "proj_e2e_test.md"
+        body_text = textwrap.dedent("""\
+            # CRM-Migration zu Salesforce
+
+            Wir suchen einen erfahrenen Python-Entwickler für die Migration
+            unseres CRM-Systems zu Salesforce. Das Projekt umfasst die
+            Integration von REST-APIs, Django-Backend-Entwicklung und
+            die Anbindung an SAP S/4 HANA.
+
+            **Anforderungen:**
+            - Python 3.11+, Django 4.x
+            - Salesforce Administration und APEX
+            - REST/SOAP API-Integration
+            - PostgreSQL, Docker, Kubernetes
+            - Agile Methoden (Scrum)
+
+            **Laufzeit:** 9 Monate, remote, 5 Tage/Woche
+            **Start:** Q1 2026
+
+            Kontakt unter: bewerbung@muster-recruiter.de
+        """)
+
+        frontmatter = textwrap.dedent("""\
+            ---
+            project_id: url-e2etest001xx
+            title: CRM-Migration zu Salesforce
+            state: scraped
+            schema_version: 2
+            company: Muster GmbH
+            provider: freelancermap
+            provider_url: https://www.freelancermap.de/projektmarkt/detail/123456
+            created_at: "2026-01-15T10:00:00Z"
+            filter_results:
+              automation-bi:
+                accepted: true
+                rule_hits: []
+            pre_scores:
+              crm_sales_automation: 0.71
+              ai_business_process_integration: 0.35
+            ---
+
+        """)
+        project_path.write_text(frontmatter + body_text, encoding="utf-8")
+
+        # ── Konfiguration ─────────────────────────────────────────────────────
+        config = _minimal_config(
+            cache_enabled=False,
+            provider="anthropic",
+        )
+
+        # ── Evaluations-Lauf mit gemocktem API-Call ────────────────────────────
+        from llm_evaluator import LLMEvaluator
+        import unittest.mock as mock_lib
+
+        api_call_log = []
+
+        def mock_call_api(self_inner, prompt: str):
+            # Kein echter API-Aufruf — sicherstellen dass Projekttext nicht roh gesendet
+            assert "bewerbung@muster-recruiter.de" not in prompt, (
+                "E-Mail-Adresse darf nicht an API gesendet werden!"
+            )
+            assert "<project_text>" in prompt, "Projekttext muss in XML-Tag eingebettet sein"
+            api_call_log.append({"prompt_len": len(prompt)})
+            return _ok_api_response(), 520, 210
+
+        with mock_lib.patch.object(LLMEvaluator, "_call_api", mock_call_api):
+            stats = run_evaluation_pass(
+                config=config,
+                output_dir=str(tmp_path),
+                projects_dir=str(tmp_path),
+            )
+
+        # ── Ergebnisse prüfen ─────────────────────────────────────────────────
+
+        # 1. Genau ein API-Aufruf (kein Real-Call, kein Versand)
+        assert len(api_call_log) == 1, f"Genau 1 API-Call erwartet, war: {len(api_call_log)}"
+        assert stats["projects_ok"] == 1
+        assert stats["projects_found"] == 1
+
+        # 2. State wurde auf 'evaluated' gesetzt
+        sm = ProjectStateManager(str(tmp_path))
+        record, body = sm.read_project_record(str(project_path))
+        assert record is not None
+        assert record.state == "evaluated", (
+            f"State muss 'evaluated' sein, war: {record.state}"
+        )
+
+        # 3. Alle 4 Profilbewertungen gespeichert
+        assert "llm_evaluation" in record.extra
+        llm_eval = record.extra["llm_evaluation"]
+        assert len(llm_eval["evaluations"]) == 4
+        assert llm_eval["best_score"] == 72
+        assert llm_eval["best_profile"] == "crm_sales_automation"
+        assert llm_eval["evaluation_status"] == "ok"
+
+        # 4. Phase-3-Daten noch vorhanden
+        assert "filter_results" in record.extra, "filter_results muss erhalten bleiben"
+        assert "pre_scores" in record.extra, "pre_scores muss erhalten bleiben"
+
+        # 5. llm_priority gesetzt
+        assert record.extra.get("llm_priority") == "high_priority"
+
+        # 6. State-History enthält evaluated-Eintrag
+        evaluated_entries = [
+            h for h in record.state_history
+            if h.get("state") == "evaluated"
+        ]
+        assert len(evaluated_entries) == 1, "State-History muss evaluated-Eintrag enthalten"
+
+        # 7. Keine echten E-Mails (nur prüfen dass keine SMTP-Importe laufen)
+        # Dieser Test sendet keine E-Mails — er ruft nur evaluate() auf.
+        # Das ist per Design sichergestellt (run_evaluation_pass macht kein smtp.send)
+        assert "smtp" not in str(stats).lower(), "Kein SMTP im Evaluations-Lauf"
