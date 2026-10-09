@@ -21,6 +21,7 @@ from state_manager import ProjectStateManager
 from utils.filename import create_safe_filename
 from dedupe_service import DedupeService
 from markdown_renderer import MarkdownRenderer
+from search_group_dispatcher import SearchGroupDispatcher, DispatchResult
 import importlib
 
 logger = logging.getLogger(__name__)
@@ -496,7 +497,14 @@ class EmailAgent:
             })
             return False
 
-    def process_email(self, mail: imaplib.IMAP4_SSL, message_id: str, provider_config: Dict[str, Any], output_dir: str) -> Dict[str, int]:
+    def process_email(
+        self,
+        mail: imaplib.IMAP4_SSL,
+        message_id: str,
+        provider_config: Dict[str, Any],
+        output_dir: str,
+        search_group_id: str = None,
+    ) -> Dict[str, int]:
         """
         Process a single email: extract URLs, scrape projects, save to files.
 
@@ -505,6 +513,10 @@ class EmailAgent:
             message_id: Message ID
             provider_config: Provider-specific email config
             output_dir: Directory to save project files
+            search_group_id: Optional search group identifier. When provided, routes
+                             through SearchGroupDispatcher (Phase 2 path) for proper
+                             search group stamping and cross-group deduplication.
+                             When None, uses the legacy direct-write path (backward compat).
 
         Returns:
             Dict with processing results: projects_saved, urls_skipped_dedupe
@@ -616,27 +628,18 @@ class EmailAgent:
             adapter = self.load_adapter(provider_config['provider_id'], provider_config)
             renderer = MarkdownRenderer()
 
+            # Phase 2: dispatcher used when search_group_id is given
+            dispatcher = SearchGroupDispatcher(output_dir, dedupe_service) if search_group_id else None
+
             # Process each URL
             for url in urls:
                 try:
                     self.logger.debug(f"Starting to scrape project URL: {url}", extra={
-                        'message_id': message_id_str
+                        'message_id': message_id_str,
+                        'search_group_id': search_group_id,
                     })
 
-                    # Canonicalize URL for dedupe
-                    canonical_url = dedupe_service.canonicalize_url(url, provider_config['provider_id'])
-
-                    # Check if already processed
-                    if dedupe_service.already_processed(provider_config['provider_id'], canonical_url):
-                        urls_skipped_dedupe += 1
-                        self.logger.info("URL already processed, skipping", extra={
-                            'url': url,
-                            'canonical_url': canonical_url,
-                            'message_id': message_id_str
-                        })
-                        continue
-
-                    # Parse project via adapter
+                    # Parse project via adapter (needed by both paths)
                     self.logger.debug("Calling adapter.parse", extra={'url': url})
                     parse_result = adapter.parse(url)
 
@@ -645,7 +648,6 @@ class EmailAgent:
                         schema = parse_result['schema']
                         html_content = parse_result.get('html')
                     else:
-                        # Backward compatibility for adapters that return schema directly
                         schema = parse_result
                         html_content = None
 
@@ -656,48 +658,96 @@ class EmailAgent:
                         'provider_id': provider_config['provider_id'],
                         'provider_name': adapter.get_provider_name(),
                         'collection_channel': 'email',
-                        'collected_at': datetime.now().isoformat()
+                        'collected_at': datetime.now().isoformat(),
                     }
 
                     # Render markdown
                     markdown_content = renderer.render(schema, provider_meta)
 
-                    # Create filename
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    original_title = schema.get('title', 'project')
-                    filename = create_safe_filename(original_title, timestamp)
+                    if dispatcher is not None:
+                        # ── Phase 2: search-group-aware path ──────────────────
+                        title = schema.get('title', 'project')
+                        discovered_at = datetime.now().isoformat()
 
-                    # Save file
-                    os.makedirs(output_dir, exist_ok=True)
-                    filepath = os.path.join(output_dir, filename)
+                        result = dispatcher.dispatch(
+                            search_group_id=search_group_id,
+                            provider_id=provider_config['provider_id'],
+                            provider_url=url,
+                            title=title,
+                            markdown_content=markdown_content,
+                            channel='email',
+                            discovered_at=discovered_at,
+                        )
 
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        f.write(markdown_content)
-
-                    # Mark as processed
-                    dedupe_service.mark_processed(provider_config['provider_id'], canonical_url)
-
-                    # Initialize state (will merge with existing frontmatter)
-                    state_manager = ProjectStateManager(output_dir)
-                    metadata = {
-                        'scraped_date': datetime.now().isoformat(),
-                        'source_url': url
-                    }
-
-                    success = state_manager.initialize_project(filepath, metadata)
-
-                    if success:
-                        projects_saved += 1
-                        self.logger.info("Project saved", extra={
-                            'filepath': filepath,
-                            'url': url,
-                            'canonical_url': canonical_url,
-                            'message_id': message_id_str
-                        })
+                        if result.action == DispatchResult.ACTION_CREATED:
+                            projects_saved += 1
+                            self.logger.info("Project created via dispatcher (email)", extra={
+                                'filepath': result.filepath,
+                                'project_id': result.project_id,
+                                'search_group_id': search_group_id,
+                                'url': url,
+                                'message_id': message_id_str,
+                            })
+                        elif result.action == DispatchResult.ACTION_MERGED:
+                            urls_skipped_dedupe += 1
+                            self.logger.info("Duplicate project — search group merged (email)", extra={
+                                'filepath': result.filepath,
+                                'project_id': result.project_id,
+                                'search_group_id': search_group_id,
+                                'url': url,
+                                'message_id': message_id_str,
+                            })
+                        else:
+                            urls_skipped_dedupe += 1
+                            self.logger.info("URL already processed by this group, skipping", extra={
+                                'url': url,
+                                'search_group_id': search_group_id,
+                                'message_id': message_id_str,
+                            })
                     else:
-                        self.logger.warning("Failed to initialize project state", extra={
-                            'filepath': filepath
-                        })
+                        # ── Legacy path (backward compat, no search group) ─────
+                        canonical_url = dedupe_service.canonicalize_url(url, provider_config['provider_id'])
+
+                        if dedupe_service.already_processed(provider_config['provider_id'], canonical_url):
+                            urls_skipped_dedupe += 1
+                            self.logger.info("URL already processed, skipping", extra={
+                                'url': url,
+                                'canonical_url': canonical_url,
+                                'message_id': message_id_str,
+                            })
+                            continue
+
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        original_title = schema.get('title', 'project')
+                        filename = create_safe_filename(original_title, timestamp)
+
+                        os.makedirs(output_dir, exist_ok=True)
+                        filepath = os.path.join(output_dir, filename)
+
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(markdown_content)
+
+                        dedupe_service.mark_processed(provider_config['provider_id'], canonical_url)
+
+                        state_manager = ProjectStateManager(output_dir)
+                        metadata = {
+                            'scraped_date': datetime.now().isoformat(),
+                            'source_url': url,
+                        }
+                        success = state_manager.initialize_project(filepath, metadata)
+
+                        if success:
+                            projects_saved += 1
+                            self.logger.info("Project saved", extra={
+                                'filepath': filepath,
+                                'url': url,
+                                'canonical_url': canonical_url,
+                                'message_id': message_id_str,
+                            })
+                        else:
+                            self.logger.warning("Failed to initialize project state", extra={
+                                'filepath': filepath,
+                            })
 
                 except Exception as e:
                     import traceback
@@ -705,7 +755,7 @@ class EmailAgent:
                         'url': url,
                         'message_id': message_id_str,
                         'error': str(e),
-                        'traceback': traceback.format_exc()
+                        'traceback': traceback.format_exc(),
                     })
 
             # Move email to processed folder (if enabled)
@@ -908,300 +958,6 @@ class EmailAgent:
 
         return summary
 
-    def fetch_rss_feed(self, feed_url: str, limit: int = 5, max_age_days: int = 7) -> List[Dict[str, Any]]:
-        """
-        Fetch and parse RSS feed, filtering by age and limit.
-
-        Args:
-            feed_url: RSS feed URL to fetch
-            limit: Maximum number of entries to return
-            max_age_days: Only include entries from the last N days
-
-        Returns:
-            List of filtered RSS entries with metadata
-        """
-        try:
-            self.logger.info("Fetching RSS feed", extra={
-                'feed_url': feed_url,
-                'limit': limit,
-                'max_age_days': max_age_days
-            })
-
-            feed = feedparser.parse(feed_url)
-
-            if feed.bozo:
-                self.logger.warning("RSS feed parsing error", extra={
-                    'feed_url': feed_url,
-                    'error': str(feed.bozo_exception)
-                })
-                return []
-
-            # Calculate cutoff date
-            from datetime import timedelta
-            cutoff_date = datetime.now() - timedelta(days=max_age_days)
-
-            filtered_entries = []
-            for entry in feed.entries[:limit]:
-                # Parse entry date
-                entry_date = None
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    entry_date = datetime(*entry.published_parsed[:6])
-                elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                    entry_date = datetime(*entry.updated_parsed[:6])
-
-                # Skip if too old
-                if entry_date and entry_date < cutoff_date:
-                    continue
-
-                # Extract URL
-                url = getattr(entry, 'link', '')
-                if not url:
-                    continue
-
-                filtered_entries.append({
-                    'title': getattr(entry, 'title', 'Untitled'),
-                    'url': url,
-                    'published_date': entry_date.isoformat() if entry_date else None,
-                    'feed_url': feed_url
-                })
-
-            self.logger.info("RSS feed fetched successfully", extra={
-                'feed_url': feed_url,
-                'total_entries': len(feed.entries),
-                'filtered_entries': len(filtered_entries)
-            })
-
-            return filtered_entries
-
-        except Exception as e:
-            self.logger.error("Failed to fetch RSS feed", extra={
-                'feed_url': feed_url,
-                'error': str(e)
-            })
-            return []
-
-    def process_rss_entries(self, entries: List[Dict[str, Any]], provider_config: Dict[str, Any], output_dir: str) -> Dict[str, int]:
-        """
-        Process RSS entries: extract URLs, scrape projects, save to files.
-
-        Args:
-            entries: List of RSS entries to process
-            provider_config: Provider-specific RSS config
-            output_dir: Directory to save project files
-
-        Returns:
-            Dict with processing results: projects_saved, urls_skipped_dedupe
-        """
-        projects_saved = 0
-        urls_skipped_dedupe = 0
-
-        # Initialize services
-        dedupe_service = DedupeService(output_dir)
-        adapter = self.load_adapter(provider_config['provider_id'], provider_config)
-        renderer = MarkdownRenderer()
-
-        for entry in entries:
-            try:
-                url = entry['url']
-                self.logger.debug("Processing RSS entry", extra={
-                    'title': entry['title'],
-                    'url': url,
-                    'feed_url': entry['feed_url']
-                })
-
-                # Canonicalize URL for dedupe
-                canonical_url = dedupe_service.canonicalize_url(url, provider_config['provider_id'])
-
-                # Check if already processed
-                if dedupe_service.already_processed(provider_config['provider_id'], canonical_url):
-                    urls_skipped_dedupe += 1
-                    self.logger.info("URL already processed, skipping", extra={
-                        'url': url,
-                        'canonical_url': canonical_url,
-                        'title': entry['title']
-                    })
-                    continue
-
-                # Parse project via adapter
-                self.logger.debug("Calling adapter.parse", extra={'url': url})
-                parse_result = adapter.parse(url)
-
-                # Handle new return format with optional HTML
-                if isinstance(parse_result, dict) and 'schema' in parse_result:
-                    schema = parse_result['schema']
-                    html_content = parse_result.get('html')
-                else:
-                    # Backward compatibility for adapters that return schema directly
-                    schema = parse_result
-                    html_content = None
-
-                self.logger.debug("adapter.parse completed", extra={'url': url, 'title': schema.get('title', 'N/A')})
-
-                # Build provider metadata
-                provider_meta = {
-                    'provider_id': provider_config['provider_id'],
-                    'provider_name': adapter.get_provider_name(),
-                    'collection_channel': 'rss',
-                    'collected_at': datetime.now().isoformat(),
-                    'feed_url': entry['feed_url'],
-                    'published_date': entry['published_date']
-                }
-
-                # Render markdown
-                markdown_content = renderer.render(schema, provider_meta)
-
-                # Create filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                original_title = schema.get('title', 'project')
-                filename = create_safe_filename(original_title, timestamp)
-
-                # Save file
-                os.makedirs(output_dir, exist_ok=True)
-                filepath = os.path.join(output_dir, filename)
-
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(markdown_content)
-
-                # Mark as processed
-                dedupe_service.mark_processed(provider_config['provider_id'], canonical_url)
-
-                # Initialize state (will merge with existing frontmatter)
-                state_manager = ProjectStateManager(output_dir)
-                metadata = {
-                    'scraped_date': datetime.now().isoformat(),
-                    'source_url': url
-                }
-
-                success = state_manager.initialize_project(filepath, metadata)
-
-                if success:
-                    projects_saved += 1
-                    self.logger.info("Project saved from RSS", extra={
-                        'filepath': filepath,
-                        'url': url,
-                        'canonical_url': canonical_url,
-                        'title': entry['title'],
-                        'feed_url': entry['feed_url']
-                    })
-                else:
-                    self.logger.warning("Failed to initialize project state", extra={
-                        'filepath': filepath
-                    })
-
-            except Exception as e:
-                import traceback
-                self.logger.error("Failed to process RSS entry", extra={
-                    'url': entry.get('url', 'N/A'),
-                    'title': entry.get('title', 'N/A'),
-                    'feed_url': entry.get('feed_url', 'N/A'),
-                    'error': str(e),
-                    'traceback': traceback.format_exc()
-                })
-
-        self.logger.info("RSS entries processing complete", extra={
-            'entries_processed': len(entries),
-            'projects_saved': projects_saved,
-            'urls_skipped_dedupe': urls_skipped_dedupe
-        })
-
-        return {
-            'projects_saved': projects_saved,
-            'urls_skipped_dedupe': urls_skipped_dedupe
-        }
-
-    def run_rss_ingestion(self, provider_id: str, output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
-        """
-        Run RSS ingestion for the specified provider.
-
-        Args:
-            provider_id: Provider identifier (e.g., 'freelancermap')
-            output_dir: Directory to save project files
-            dry_run: If True, validate config and simulate operations without side effects
-
-        Returns:
-            Summary dictionary with processing results
-        """
-        self.logger.info("Starting RSS ingestion run", extra={
-            'provider_id': provider_id,
-            'output_dir': output_dir,
-            'dry_run': dry_run
-        })
-
-        summary = {
-            'provider_id': provider_id,
-            'dry_run': dry_run,
-            'entries_found': 0,
-            'entries_processed': 0,
-            'urls_skipped_dedupe': 0,
-            'projects_saved': 0,
-            'errors': 0
-        }
-
-        try:
-            # Get provider config
-            provider_config = self.config.get('providers', {}).get(provider_id, {}).get('channels', {}).get('rss', {})
-            if not provider_config:
-                self.logger.error("No RSS config found for provider", extra={'provider_id': provider_id})
-                summary['errors'] += 1
-                return summary
-
-            provider_config['provider_id'] = provider_id
-
-            # Get feed URLs
-            feed_urls = provider_config.get('feed_urls', [])
-            if not feed_urls:
-                self.logger.error("No feed URLs configured for provider", extra={'provider_id': provider_id})
-                summary['errors'] += 1
-                return summary
-
-            # Get limits
-            limit = provider_config.get('limit', self.config.get('channels', {}).get('rss', {}).get('default_limit', 5))
-            max_age_days = provider_config.get('max_age_days', self.config.get('channels', {}).get('rss', {}).get('max_age_days', 7))
-
-            if dry_run:
-                # Simulate operations
-                self.logger.info("DRY RUN: Would fetch RSS feeds", extra={
-                    'feed_urls': feed_urls,
-                    'limit': limit,
-                    'max_age_days': max_age_days
-                })
-                self.logger.info("DRY RUN: Would process RSS entries", extra={
-                    'output_dir': output_dir
-                })
-                summary['entries_found'] = 0  # Unknown in dry run
-                summary['entries_processed'] = 0
-                summary['urls_skipped_dedupe'] = 0
-                summary['projects_saved'] = 0
-                self.logger.info("RSS ingestion dry run complete", extra=summary)
-                return summary
-
-            # Actual run
-            all_entries = []
-            for feed_url in feed_urls:
-                entries = self.fetch_rss_feed(feed_url, limit, max_age_days)
-                all_entries.extend(entries)
-
-            summary['entries_found'] = len(all_entries)
-
-            if all_entries:
-                result = self.process_rss_entries(all_entries, provider_config, output_dir)
-                summary['entries_processed'] = len(all_entries)
-                summary['urls_skipped_dedupe'] = result['urls_skipped_dedupe']
-                summary['projects_saved'] = result['projects_saved']
-            else:
-                self.logger.info("No RSS entries to process", extra={'provider_id': provider_id})
-
-            self.logger.info("RSS ingestion run complete", extra=summary)
-
-        except Exception as e:
-            summary['errors'] += 1
-            self.logger.error("RSS ingestion run failed", extra={
-                'error': str(e),
-                'summary': summary
-            })
-
-        return summary
-
     def get_enabled_providers(self, channel: str = 'email') -> List[str]:
         """
         Get list of enabled providers from configuration for a specific channel.
@@ -1227,20 +983,26 @@ class EmailAgent:
         })
         return enabled_providers
 
-    def fetch_rss_feed(self, feed_url: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def fetch_rss_feed(self, feed_url: str, limit: int = 5, max_age_days: int = 7) -> List[Dict[str, Any]]:
         """
-        Fetch and parse RSS feed entries.
+        Fetch and parse RSS feed entries, optionally filtered by age.
 
         Args:
             feed_url: URL of the RSS feed
             limit: Maximum number of entries to return
+            max_age_days: Only include entries from the last N days (0 = no filter)
 
         Returns:
-            List of feed entries with title, link, and published date
+            List of feed entries with title, link, published, summary, and id
         """
         try:
             import feedparser
-            self.logger.info("Fetching RSS feed", extra={'feed_url': feed_url, 'limit': limit})
+            from datetime import timedelta
+            self.logger.info("Fetching RSS feed", extra={
+                'feed_url': feed_url,
+                'limit': limit,
+                'max_age_days': max_age_days,
+            })
             feed = feedparser.parse(feed_url)
 
             if feed.bozo:
@@ -1249,8 +1011,21 @@ class EmailAgent:
                     'error': str(feed.bozo_exception)
                 })
 
+            cutoff = datetime.now() - timedelta(days=max_age_days) if max_age_days else None
+
             entries = []
             for entry in feed.entries[:limit]:
+                # Parse entry date (prefer published, fall back to updated)
+                entry_date = None
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    entry_date = datetime(*entry.published_parsed[:6])
+                elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                    entry_date = datetime(*entry.updated_parsed[:6])
+
+                # Skip entries older than cutoff
+                if cutoff and entry_date and entry_date < cutoff:
+                    continue
+
                 entry_data = {
                     'title': entry.get('title', 'No Title'),
                     'link': entry.get('link', ''),
@@ -1273,7 +1048,13 @@ class EmailAgent:
             })
             raise
 
-    def process_rss_entries(self, entries: List[Dict[str, Any]], provider_config: Dict[str, Any], output_dir: str) -> Dict[str, int]:
+    def process_rss_entries(
+        self,
+        entries: List[Dict[str, Any]],
+        provider_config: Dict[str, Any],
+        output_dir: str,
+        search_group_id: str = None,
+    ) -> Dict[str, int]:
         """
         Process RSS feed entries into projects.
 
@@ -1281,6 +1062,10 @@ class EmailAgent:
             entries: List of RSS feed entries
             provider_config: Provider-specific configuration
             output_dir: Directory to save project files
+            search_group_id: Optional search group identifier. When provided, routes
+                             through SearchGroupDispatcher (Phase 2 path) for proper
+                             search group stamping and cross-group deduplication.
+                             When None, uses the legacy direct-write path (backward compat).
 
         Returns:
             Dict with processing results: projects_saved, urls_skipped_dedupe
@@ -1293,6 +1078,9 @@ class EmailAgent:
         adapter = self.load_adapter(provider_config['provider_id'], provider_config)
         renderer = MarkdownRenderer()
 
+        # Phase 2: dispatcher used when search_group_id is given
+        dispatcher = SearchGroupDispatcher(output_dir, dedupe_service) if search_group_id else None
+
         for entry in entries:
             try:
                 url = entry.get('link', '').strip()
@@ -1301,79 +1089,120 @@ class EmailAgent:
 
                 self.logger.debug("Processing RSS entry", extra={
                     'title': entry.get('title'),
-                    'url': url
+                    'url': url,
+                    'search_group_id': search_group_id,
                 })
 
-                # Canonicalize URL for dedupe
-                canonical_url = dedupe_service.canonicalize_url(url, provider_config['provider_id'])
+                if dispatcher is not None:
+                    # ── Phase 2: search-group-aware path ──────────────────────
+                    # Parse project via adapter
+                    parse_result = adapter.parse(url)
+                    if isinstance(parse_result, dict) and 'schema' in parse_result:
+                        schema = parse_result['schema']
+                    else:
+                        schema = parse_result
 
-                # Check if already processed
-                if dedupe_service.already_processed(provider_config['provider_id'], canonical_url):
-                    urls_skipped_dedupe += 1
-                    self.logger.info("URL already processed, skipping", extra={
-                        'url': url,
-                        'canonical_url': canonical_url
-                    })
-                    continue
+                    provider_meta = {
+                        'provider_id': provider_config['provider_id'],
+                        'provider_name': adapter.get_provider_name(),
+                        'collection_channel': 'rss',
+                        'collected_at': datetime.now().isoformat(),
+                    }
+                    markdown_content = renderer.render(schema, provider_meta)
+                    title = schema.get('title', 'project')
+                    discovered_at = datetime.now().isoformat()
 
-                # Parse project via adapter
-                parse_result = adapter.parse(url)
+                    result = dispatcher.dispatch(
+                        search_group_id=search_group_id,
+                        provider_id=provider_config['provider_id'],
+                        provider_url=url,
+                        title=title,
+                        markdown_content=markdown_content,
+                        channel='rss',
+                        discovered_at=discovered_at,
+                    )
 
-                # Handle new return format with optional HTML
-                if isinstance(parse_result, dict) and 'schema' in parse_result:
-                    schema = parse_result['schema']
-                    html_content = parse_result.get('html')
+                    if result.action == DispatchResult.ACTION_CREATED:
+                        projects_saved += 1
+                        self.logger.info("Project created via dispatcher (RSS)", extra={
+                            'filepath': result.filepath,
+                            'project_id': result.project_id,
+                            'search_group_id': search_group_id,
+                            'url': url,
+                        })
+                    elif result.action == DispatchResult.ACTION_MERGED:
+                        # Cross-group duplicate: existing file updated, counts as processed
+                        urls_skipped_dedupe += 1
+                        self.logger.info("Duplicate project — search group merged (RSS)", extra={
+                            'filepath': result.filepath,
+                            'project_id': result.project_id,
+                            'search_group_id': search_group_id,
+                            'url': url,
+                        })
+                    else:
+                        # ACTION_SKIPPED: group already present on this project
+                        urls_skipped_dedupe += 1
+                        self.logger.info("URL already processed by this group, skipping", extra={
+                            'url': url,
+                            'search_group_id': search_group_id,
+                        })
                 else:
-                    schema = parse_result
-                    html_content = None
+                    # ── Legacy path (backward compat, no search group) ─────────
+                    canonical_url = dedupe_service.canonicalize_url(url, provider_config['provider_id'])
 
-                # Build provider metadata
-                provider_meta = {
-                    'provider_id': provider_config['provider_id'],
-                    'provider_name': adapter.get_provider_name(),
-                    'collection_channel': 'rss',
-                    'collected_at': datetime.now().isoformat()
-                }
+                    if dedupe_service.already_processed(provider_config['provider_id'], canonical_url):
+                        urls_skipped_dedupe += 1
+                        self.logger.info("URL already processed, skipping", extra={
+                            'url': url,
+                            'canonical_url': canonical_url,
+                        })
+                        continue
 
-                # Render markdown
-                markdown_content = renderer.render(schema, provider_meta)
+                    parse_result = adapter.parse(url)
+                    if isinstance(parse_result, dict) and 'schema' in parse_result:
+                        schema = parse_result['schema']
+                    else:
+                        schema = parse_result
 
-                # Create filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                original_title = schema.get('title', 'project')
-                filename = create_safe_filename(original_title, timestamp)
+                    provider_meta = {
+                        'provider_id': provider_config['provider_id'],
+                        'provider_name': adapter.get_provider_name(),
+                        'collection_channel': 'rss',
+                        'collected_at': datetime.now().isoformat(),
+                    }
+                    markdown_content = renderer.render(schema, provider_meta)
 
-                # Save file
-                os.makedirs(output_dir, exist_ok=True)
-                filepath = os.path.join(output_dir, filename)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    original_title = schema.get('title', 'project')
+                    filename = create_safe_filename(original_title, timestamp)
 
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(markdown_content)
+                    os.makedirs(output_dir, exist_ok=True)
+                    filepath = os.path.join(output_dir, filename)
 
-                # Mark as processed
-                dedupe_service.mark_processed(provider_config['provider_id'], canonical_url)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(markdown_content)
 
-                # Initialize state
-                state_manager = ProjectStateManager(output_dir)
-                metadata = {
-                    'scraped_date': datetime.now().isoformat(),
-                    'source_url': url
-                }
+                    dedupe_service.mark_processed(provider_config['provider_id'], canonical_url)
 
-                success = state_manager.initialize_project(filepath, metadata)
+                    state_manager = ProjectStateManager(output_dir)
+                    metadata = {
+                        'scraped_date': datetime.now().isoformat(),
+                        'source_url': url,
+                    }
+                    success = state_manager.initialize_project(filepath, metadata)
 
-                if success:
-                    projects_saved += 1
-                    self.logger.info("Project saved from RSS", extra={
-                        'filepath': filepath,
-                        'url': url,
-                        'canonical_url': canonical_url,
-                        'title': entry.get('title')
-                    })
-                else:
-                    self.logger.warning("Failed to initialize project state", extra={
-                        'filepath': filepath
-                    })
+                    if success:
+                        projects_saved += 1
+                        self.logger.info("Project saved from RSS", extra={
+                            'filepath': filepath,
+                            'url': url,
+                            'canonical_url': canonical_url,
+                            'title': entry.get('title'),
+                        })
+                    else:
+                        self.logger.warning("Failed to initialize project state", extra={
+                            'filepath': filepath,
+                        })
 
             except Exception as e:
                 import traceback
@@ -1381,18 +1210,19 @@ class EmailAgent:
                     'title': entry.get('title'),
                     'url': entry.get('link'),
                     'error': str(e),
-                    'traceback': traceback.format_exc()
+                    'traceback': traceback.format_exc(),
                 })
 
         self.logger.info("RSS entries processing complete", extra={
             'entries_processed': len(entries),
             'projects_saved': projects_saved,
-            'urls_skipped_dedupe': urls_skipped_dedupe
+            'urls_skipped_dedupe': urls_skipped_dedupe,
+            'search_group_id': search_group_id,
         })
 
         return {
             'projects_saved': projects_saved,
-            'urls_skipped_dedupe': urls_skipped_dedupe
+            'urls_skipped_dedupe': urls_skipped_dedupe,
         }
 
     def run_rss_ingestion(self, provider_id: str, output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
@@ -1643,6 +1473,240 @@ class EmailAgent:
         self.logger.info("Multi-provider RSS ingestion run complete", extra=total_summary)
         return total_summary
 
+    # ── Phase 2: Search-group-aware ingestion ─────────────────────────────────
+
+    def run_rss_ingestion_for_group(
+        self,
+        group_config,  # SearchGroupConfig
+        output_dir: str = 'projects',
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Run RSS ingestion for a single search group across all its configured providers.
+
+        Args:
+            group_config: SearchGroupConfig instance for this group.
+            output_dir: Directory for project files.
+            dry_run: If True, simulate without side effects.
+
+        Returns:
+            Summary dict with entries_found, projects_saved, urls_skipped_dedupe, errors.
+        """
+        group_id = group_config.group_id
+        self.logger.info("Starting RSS ingestion for search group", extra={
+            'group_id': group_id,
+            'output_dir': output_dir,
+            'dry_run': dry_run,
+        })
+
+        summary: Dict[str, Any] = {
+            'group_id': group_id,
+            'dry_run': dry_run,
+            'entries_found': 0,
+            'projects_saved': 0,
+            'urls_skipped_dedupe': 0,
+            'errors': 0,
+            'provider_summaries': {},
+        }
+
+        for provider_id in group_config.get_rss_providers():
+            rss_cfg = group_config.providers[provider_id].rss
+            feed_urls = rss_cfg.feed_urls
+            limit = rss_cfg.limit
+            max_age_days = rss_cfg.max_age_days
+
+            provider_summary: Dict[str, Any] = {
+                'entries_found': 0,
+                'projects_saved': 0,
+                'urls_skipped_dedupe': 0,
+                'errors': 0,
+            }
+
+            if dry_run:
+                self.logger.info("DRY RUN: Would fetch RSS feeds for group", extra={
+                    'group_id': group_id,
+                    'provider_id': provider_id,
+                    'feed_urls': feed_urls,
+                    'limit': limit,
+                    'max_age_days': max_age_days,
+                })
+                summary['provider_summaries'][provider_id] = provider_summary
+                continue
+
+            all_entries: List[Dict[str, Any]] = []
+            for feed_url in feed_urls:
+                try:
+                    entries = self.fetch_rss_feed(feed_url, limit)
+                    all_entries.extend(entries)
+                except Exception as e:
+                    self.logger.error("Failed to fetch RSS feed for group", extra={
+                        'group_id': group_id,
+                        'provider_id': provider_id,
+                        'feed_url': feed_url,
+                        'error': str(e),
+                    })
+                    provider_summary['errors'] += 1
+                    summary['errors'] += 1
+
+            provider_summary['entries_found'] = len(all_entries)
+            summary['entries_found'] += len(all_entries)
+
+            if all_entries:
+                # Build provider_config compatible dict for process_rss_entries
+                provider_config = {
+                    'provider_id': provider_id,
+                    'feed_urls': feed_urls,
+                    'limit': limit,
+                    'max_age_days': max_age_days,
+                }
+                result = self.process_rss_entries(
+                    all_entries,
+                    provider_config,
+                    output_dir,
+                    search_group_id=group_id,
+                )
+                provider_summary['projects_saved'] = result['projects_saved']
+                provider_summary['urls_skipped_dedupe'] = result['urls_skipped_dedupe']
+                summary['projects_saved'] += result['projects_saved']
+                summary['urls_skipped_dedupe'] += result['urls_skipped_dedupe']
+
+            summary['provider_summaries'][provider_id] = provider_summary
+
+        self.logger.info("RSS ingestion for search group complete", extra=summary)
+        return summary
+
+    def run_email_ingestion_for_group(
+        self,
+        group_config,  # SearchGroupConfig
+        output_dir: str = 'projects',
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Run email ingestion for a single search group across all its configured providers.
+
+        Args:
+            group_config: SearchGroupConfig instance for this group.
+            output_dir: Directory for project files.
+            dry_run: If True, simulate without side effects.
+
+        Returns:
+            Summary dict with emails_processed, projects_saved, urls_skipped_dedupe, errors.
+        """
+        group_id = group_config.group_id
+        self.logger.info("Starting email ingestion for search group", extra={
+            'group_id': group_id,
+            'output_dir': output_dir,
+            'dry_run': dry_run,
+        })
+
+        summary: Dict[str, Any] = {
+            'group_id': group_id,
+            'dry_run': dry_run,
+            'emails_processed': 0,
+            'projects_saved': 0,
+            'urls_skipped_dedupe': 0,
+            'errors': 0,
+            'provider_summaries': {},
+        }
+
+        for provider_id in group_config.get_email_providers():
+            email_cfg = group_config.providers[provider_id].email
+            provider_summary: Dict[str, Any] = {
+                'emails_processed': 0,
+                'projects_saved': 0,
+                'urls_skipped_dedupe': 0,
+                'errors': 0,
+            }
+
+            # Build a provider_config compatible dict
+            provider_config: Dict[str, Any] = {
+                'provider_id': provider_id,
+                'senders': email_cfg.senders,
+                'subject_patterns': email_cfg.subject_patterns,
+                'body_url_patterns': email_cfg.body_url_patterns,
+                'url_exclude_patterns': email_cfg.url_exclude_patterns,
+                'max_urls_per_email': email_cfg.max_urls_per_email,
+                'move_processed': False,  # Safety: no mail moves in search-group path
+            }
+
+            if dry_run:
+                self.logger.info("DRY RUN: Would process emails for group", extra={
+                    'group_id': group_id,
+                    'provider_id': provider_id,
+                    'senders': email_cfg.senders,
+                    'subject_patterns': email_cfg.subject_patterns,
+                })
+                summary['provider_summaries'][provider_id] = provider_summary
+                continue
+
+            try:
+                mail = self.connect_imap()
+                source_folder = self.email_config.get('source_folder', 'INBOX')
+
+                # Use EXAMINE (read-only) when configured
+                if self.email_config.get('examine_only', False):
+                    mail.select(source_folder, readonly=True)
+                else:
+                    mail.select(source_folder)
+
+                max_age_days = self.email_config.get('max_age_days', 7)
+                import datetime as dt
+                now = dt.datetime.now()
+                since_date = (now - dt.timedelta(days=max_age_days)).strftime('%d-%b-%Y')
+                status, messages = mail.uid('search', None, f'SINCE {since_date}')
+
+                if status != 'OK':
+                    self.logger.error("Email search failed for group", extra={
+                        'group_id': group_id,
+                        'provider_id': provider_id,
+                    })
+                    summary['errors'] += 1
+                    mail.logout()
+                    summary['provider_summaries'][provider_id] = provider_summary
+                    continue
+
+                message_ids = [mid.decode('utf-8') for mid in messages[0].split() if mid]
+                for message_id in message_ids:
+                    provider_summary['emails_processed'] += 1
+                    summary['emails_processed'] += 1
+                    try:
+                        result = self.process_email(
+                            mail,
+                            message_id,
+                            provider_config,
+                            output_dir,
+                            search_group_id=group_id,
+                        )
+                        provider_summary['projects_saved'] += result['projects_saved']
+                        provider_summary['urls_skipped_dedupe'] += result['urls_skipped_dedupe']
+                        summary['projects_saved'] += result['projects_saved']
+                        summary['urls_skipped_dedupe'] += result['urls_skipped_dedupe']
+                    except Exception as e:
+                        provider_summary['errors'] += 1
+                        summary['errors'] += 1
+                        self.logger.error("Failed to process email for group", extra={
+                            'group_id': group_id,
+                            'provider_id': provider_id,
+                            'message_id': message_id,
+                            'error': str(e),
+                        })
+
+                mail.logout()
+
+            except Exception as e:
+                provider_summary['errors'] += 1
+                summary['errors'] += 1
+                self.logger.error("Email ingestion failed for group/provider", extra={
+                    'group_id': group_id,
+                    'provider_id': provider_id,
+                    'error': str(e),
+                })
+
+            summary['provider_summaries'][provider_id] = provider_summary
+
+        self.logger.info("Email ingestion for search group complete", extra=summary)
+        return summary
+
     def run_full_workflow(self, output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
         """
         Run the complete workflow: RSS ingestion followed by email ingestion for all enabled providers.
@@ -1814,3 +1878,112 @@ def run_full_workflow(config: Dict[str, Any], output_dir: str = 'projects', dry_
         'rss_summary': rss_result,
         'email_summary': email_result
     }
+
+
+# ── Phase 2: Search-group-aware module-level entry points ─────────────────────
+
+def run_rss_ingestion_for_search_groups(
+    config: Dict[str, Any],
+    output_dir: str = 'projects',
+    dry_run: bool = False,
+    group_ids: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    Run RSS ingestion for all (or specified) enabled search groups.
+
+    Each group uses its own feed URLs, keywords and limits from config.
+    Projects found by multiple groups are merged (no duplicate files).
+
+    Args:
+        config: Full configuration dictionary (must contain 'search_groups').
+        output_dir: Directory for project files.
+        dry_run: If True, simulate without side effects.
+        group_ids: Optional subset of group IDs to run. None = all enabled groups.
+
+    Returns:
+        Summary dict keyed by group_id.
+    """
+    from search_group_config import load_search_groups
+
+    agent = EmailAgent(config)
+    groups = load_search_groups(config)
+
+    total_summary: Dict[str, Any] = {
+        'dry_run': dry_run,
+        'groups_processed': 0,
+        'total_entries_found': 0,
+        'total_projects_saved': 0,
+        'total_urls_skipped_dedupe': 0,
+        'total_errors': 0,
+        'group_summaries': {},
+    }
+
+    for group_id, group_cfg in groups.items():
+        if not group_cfg.enabled:
+            continue
+        if group_ids is not None and group_id not in group_ids:
+            continue
+
+        summary = agent.run_rss_ingestion_for_group(group_cfg, output_dir, dry_run)
+        total_summary['group_summaries'][group_id] = summary
+        total_summary['groups_processed'] += 1
+        total_summary['total_entries_found'] += summary.get('entries_found', 0)
+        total_summary['total_projects_saved'] += summary.get('projects_saved', 0)
+        total_summary['total_urls_skipped_dedupe'] += summary.get('urls_skipped_dedupe', 0)
+        total_summary['total_errors'] += summary.get('errors', 0)
+
+    return total_summary
+
+
+def run_full_workflow_for_search_groups(
+    config: Dict[str, Any],
+    output_dir: str = 'projects',
+    dry_run: bool = False,
+    group_ids: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    Run both RSS and email ingestion for all (or specified) enabled search groups.
+
+    Args:
+        config: Full configuration dictionary (must contain 'search_groups').
+        output_dir: Directory for project files.
+        dry_run: If True, simulate without side effects.
+        group_ids: Optional subset of group IDs to run. None = all enabled groups.
+
+    Returns:
+        Aggregated summary with rss_summary and email_summary per group.
+    """
+    from search_group_config import load_search_groups
+
+    agent = EmailAgent(config)
+    groups = load_search_groups(config)
+
+    total_summary: Dict[str, Any] = {
+        'dry_run': dry_run,
+        'groups_processed': 0,
+        'total_projects_saved': 0,
+        'total_errors': 0,
+        'group_summaries': {},
+    }
+
+    for group_id, group_cfg in groups.items():
+        if not group_cfg.enabled:
+            continue
+        if group_ids is not None and group_id not in group_ids:
+            continue
+
+        rss_summary = agent.run_rss_ingestion_for_group(group_cfg, output_dir, dry_run)
+        email_summary = agent.run_email_ingestion_for_group(group_cfg, output_dir, dry_run)
+
+        group_result = {
+            'rss': rss_summary,
+            'email': email_summary,
+            'projects_saved': rss_summary.get('projects_saved', 0) + email_summary.get('projects_saved', 0),
+            'errors': rss_summary.get('errors', 0) + email_summary.get('errors', 0),
+        }
+        total_summary['group_summaries'][group_id] = group_result
+        total_summary['groups_processed'] += 1
+        total_summary['total_projects_saved'] += group_result['projects_saved']
+        total_summary['total_errors'] += group_result['errors']
+
+    return total_summary
