@@ -99,6 +99,8 @@ class ProjectResponse(BaseModel):
     retrieval_date: Optional[str]
     posted_date: Optional[str]
     pre_eval_score: Optional[int]
+    # Herkunft des Werts in pre_eval_score: "eignung" | "tfidf" | "keyword" | None
+    pre_eval_score_kind: Optional[str] = None
     llm_score: Optional[int]
     status: str
     state_history: List[Dict[str, Any]]
@@ -298,6 +300,36 @@ def save_quick_filters(filters: QuickFilterList):
 
 # Utility functions
 
+# Herkunft des angezeigten Vorbewertungs-Scores
+SCORE_KIND_SUITABILITY = "eignung"   # regelbasierte Eignungsbewertung
+SCORE_KIND_TFIDF = "tfidf"           # Textähnlichkeit zu den Kompetenzprofilen
+SCORE_KIND_KEYWORD = "keyword"       # Keyword-Vorbewertung aus evaluate_projects.py
+
+_SUITABILITY_KIND_RE = re.compile(r"^- \*\*Score-Art:\*\*\s*Eignung", re.MULTILINE)
+_EVALUATION_SECTION_RE = re.compile(r"## 🤖 AI Evaluation Results")
+
+
+def detect_pre_eval_score_kind(content: str, pre_eval_score: Optional[int]) -> Optional[str]:
+    """
+    Bestimmt, woher der angezeigte Vorbewertungs-Score stammt.
+
+    Gelesen wird nur der vorhandene Dateiinhalt; nichts wird geschrieben.
+
+    - "keyword": Der Wert stammt aus einem Abschnitt "AI Evaluation Results"
+      (extract_latest_scores liest ihn dann von dort).
+    - "eignung": Die Datei trägt die Zeile "- **Score-Art:** Eignung …".
+    - "tfidf":   sonst — Score-Zeile aus der TF-IDF-Vorbewertung, auch bei
+      älteren Dateien ohne Kennzeichnung.
+    """
+    if pre_eval_score is None:
+        return None
+    if _EVALUATION_SECTION_RE.search(content):
+        return SCORE_KIND_KEYWORD
+    if _SUITABILITY_KIND_RE.search(content):
+        return SCORE_KIND_SUITABILITY
+    return SCORE_KIND_TFIDF
+
+
 def extract_latest_scores(content: str) -> Tuple[Optional[int], Optional[int]]:
     """
     Extract the latest pre-evaluation and LLM scores from markdown content.
@@ -369,6 +401,7 @@ def parse_project_file(file_path: str) -> Dict[str, Any]:
             "retrieval_date": None,  # Required field
             "posted_date": None,     # Required field
             "pre_eval_score": None,
+            "pre_eval_score_kind": None,
             "llm_score": None,
             "metadata": {}
         }
@@ -409,6 +442,8 @@ def parse_project_file(file_path: str) -> Dict[str, Any]:
 
         # Extract latest scores from content (handle multiple evaluations)
         metadata["pre_eval_score"], metadata["llm_score"] = extract_latest_scores(content)
+        metadata["pre_eval_score_kind"] = detect_pre_eval_score_kind(
+            content, metadata["pre_eval_score"])
 
         # Phase 5: LLM-Bewertungsdaten aus extra-Frontmatter-Feldern lesen
         # Diese werden von evaluate_projects.py in record.extra gespeichert.
@@ -449,6 +484,7 @@ def parse_project_file(file_path: str) -> Dict[str, Any]:
             "retrieval_date": None,
             "posted_date": None,
             "pre_eval_score": None,
+            "pre_eval_score_kind": None,
             "llm_score": None,
             "llm_priority": None,
             "evaluation_status": None,
