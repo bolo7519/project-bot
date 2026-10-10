@@ -89,13 +89,29 @@ def _must_sections(text: str) -> str:
     return "\n".join(chunks)
 
 
-def _matches(terms: List[str], text: str) -> List[str]:
-    """Liefert die Begriffe aus ``terms``, die in ``text`` vorkommen."""
+def _matches(terms: List[Any], text: str) -> List[str]:
+    """
+    Liefert die Begriffe aus ``terms``, die in ``text`` vorkommen.
+
+    Ein Eintrag ist ein Begriff oder ``{"term": ..., "with": [...]}``: Letzterer
+    zählt nur, wenn zusätzlich mindestens einer der ``with``-Begriffe vorkommt
+    (z.B. "DAX" nur im Power-BI-Zusammenhang, nicht bei "DAX-Konzern").
+    """
     found: List[str] = []
-    for term in terms or []:
-        pattern = _compile_include_term(term)
-        if pattern is not None and pattern.search(text):
-            found.append(term)
+    for entry in terms or []:
+        context: List[str] = []
+        term = entry
+        if isinstance(entry, dict):
+            term = entry.get("term")
+            context = list(entry.get("with") or [])
+        if not term:
+            continue
+        pattern = _compile_include_term(str(term))
+        if pattern is None or not pattern.search(text):
+            continue
+        if context and not _matches(context, text):
+            continue
+        found.append(str(term))
     return found
 
 

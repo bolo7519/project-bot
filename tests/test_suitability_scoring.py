@@ -373,13 +373,17 @@ class TestRulesConfiguration:
         rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
         group = rules["suitability"]["groups"][A]
         assert group["transferable"] == ["n8n"]
-        assert "n8n" not in group["high"] + group["medium"]
+        assert "n8n" not in [t for t in group["high"] + group["medium"] if isinstance(t, str)]
 
     def test_stated_priorities_are_present(self):
         rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
         groups = rules["suitability"]["groups"]
-        for term in ("Power BI", "Bitrix24", "Salesforce", "Make.com", "Zapier", "SharePoint"):
+        for term in ("Power BI", "Power Query", "Datenaufbereitung", "Management Reporting",
+                     "KPI-Dashboard*", "Bitrix24", "Salesforce", "Make.com", "Zapier",
+                     "SharePoint"):
             assert term in groups[A]["high"], term
+        assert {"term": "DAX", "with": ["Power BI", "Power Query", "DAX-Formel*",
+                                        "DAX-Measure*", "Measure*"]} in groups[A]["high"]
         assert "ActiveCampaign" in groups[A]["medium"]
         for term in ("Sophos", "Firewall*", "VPN", "WAN", "Routing", "Switching"):
             assert term in groups[B]["high"], term
@@ -787,3 +791,114 @@ class TestCompetencyProfiles:
         assert "Bitrix24" in summary
         for unwanted in ("n8n", "Pega", "Nicht als Keyword", "STAND", "-->"):
             assert unwanted not in summary, unwanted
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11 — Power BI: praktische Erfahrung vs. nicht belegte Spezialisierung
+# ══════════════════════════════════════════════════════════════════════════════
+
+PBI_DEVELOPER = {
+    "title": "Power BI Entwickler (m/w/d) – Berichte und Datenmodell",
+    "description": (
+        "Erstellung von Berichten in Power BI, Kennzahlen mit DAX, Datenaufbereitung "
+        "mit Power Query. Einsatz: Remote, Auslastung: 50 %.\n"
+        "Anforderungen:\n- Praktische Erfahrung mit Power BI, DAX und Power Query"
+    ),
+}
+PBI_MANAGEMENT_REPORTING = {
+    "title": "Berater Management Reporting / KPI-Dashboards (m/w/d)",
+    "description": (
+        "Aufbau eines Management Reportings mit KPI-Dashboards in Power BI für die "
+        "Geschäftsführung. Einsatz: 100% Remote, 3 Tage pro Woche."
+    ),
+}
+PBI_SHAREPOINT = {
+    "title": "Senior Consultant Power BI & SharePoint (m/w/d)",
+    "description": (
+        "Reporting auf Basis von SharePoint-Listen in Microsoft 365, DAX-Formeln für "
+        "Kennzahlen, Power Query für die Datenaufbereitung. Ort: Remote."
+    ),
+}
+DATA_ENGINEER = {
+    "title": "Senior Data Engineer Power BI / Databricks (m/w/d)",
+    "description": (
+        "Aufbau einer Datenplattform, Berichte in Power BI mit DAX und Power Query. "
+        "Ort: Remote.\n"
+        "Must-Have\n- Mehrjährige Erfahrung mit Databricks und PySpark\n"
+        "- Data Vault Modellierung\nNice-To-Have\n- Power BI"
+    ),
+}
+
+
+class TestPowerBi:
+
+    @pytest.mark.parametrize(
+        "project", [PBI_DEVELOPER, PBI_MANAGEMENT_REPORTING, PBI_SHAREPOINT],
+        ids=["entwickler_dax_power_query", "management_reporting", "power_bi_sharepoint"],
+    )
+    def test_fitting_power_bi_projects_score_high_and_recommend_apply(self, scorer, project):
+        r = scorer.score_project(project)
+        assert r.best_group == A
+        assert r.decision == DECISION_HIGH
+        assert r.recommendation == RECOMMEND_APPLY
+        assert r.reject_reason is None
+        assert not any("Spezialistenrolle" in x for x in r.reasons)
+        assert any("Power BI" in x for x in r.reasons)
+
+    def test_dax_and_power_query_count_as_high_priority(self, scorer):
+        r = scorer.score_project(PBI_DEVELOPER)
+        high = next(x for x in r.reasons if x.startswith("Hohe Priorität"))
+        for term in ("Power BI", "Power Query", "DAX", "Datenaufbereitung"):
+            assert term in high, term
+
+    def test_power_bi_outranks_all_eight_real_projects(self, scorer, results):
+        best_real = max(r.technical_score for r in results.values())
+        for project in (PBI_DEVELOPER, PBI_MANAGEMENT_REPORTING, PBI_SHAREPOINT):
+            assert scorer.score_project(project).technical_score > best_real
+
+    def test_required_power_bi_practice_is_not_treated_as_specialisation(self, scorer):
+        """DAX/Power Query als Anforderung ist belegte Praxis, kein Deckel."""
+        r = scorer.score_project(PBI_DEVELOPER)
+        assert r.technical_score > 40
+
+    def test_data_engineering_specialist_is_capped_not_rejected(self, scorer):
+        r = scorer.score_project(DATA_ENGINEER)
+        assert r.technical_score == 40 and r.decision == DECISION_MEDIUM
+        assert r.reject_reason is None
+        assert r.recommendation == RECOMMEND_REVIEW
+        assert any("Data-Engineering" in x and "begrenzt" in x for x in r.reasons)
+
+    def test_single_unverified_requirement_does_not_cap(self, scorer):
+        project = dict(PBI_DEVELOPER, description=PBI_DEVELOPER["description"]
+                       + "\n- Zertifizierung PL-300 erforderlich")
+        r = scorer.score_project(project)
+        assert r.decision == DECISION_HIGH
+        assert not any("Spezialistenrolle" in x for x in r.reasons)
+
+    def test_dax_without_power_bi_context_does_not_count(self, scorer):
+        project = {
+            "title": "Projektleiter CRM-Einführung bei einem DAX-Konzern (m/w/d)",
+            "description": "Einführung von Salesforce im Vertrieb eines DAX-Konzerns. Remote.",
+        }
+        assert not any("DAX" in x.split(":")[1] for x in scorer.score_project(project).reasons
+                       if x.startswith("Hohe Priorität"))
+
+    def test_profile_contains_dax_and_power_query(self):
+        text = _profile_keywords("power_bi_sharepoint")
+        for term in ("Power BI", "DAX", "Power Query", "Datenaufbereitung",
+                     "KPI-Dashboard", "Management Reporting"):
+            assert term in text, term
+        assert "praktische, selbst ausgeführte Arbeit mit DAX-Formeln" in text
+
+    @pytest.mark.parametrize(
+        "project", [PBI_DEVELOPER, PBI_MANAGEMENT_REPORTING, PBI_SHAREPOINT],
+        ids=["entwickler_dax_power_query", "management_reporting", "power_bi_sharepoint"],
+    )
+    def test_tfidf_assigns_power_bi_profile(self, project):
+        from pre_scorer import PreScorer
+        assert PreScorer().score_project(project).best_profile == "power_bi_sharepoint"
+
+    def test_power_bi_projects_are_captured_by_group_a(self):
+        engine = FilterEngine(FilterConfig.from_dict(load_default_topic_filters()[A]))
+        for project in (PBI_DEVELOPER, PBI_MANAGEMENT_REPORTING, PBI_SHAREPOINT, DATA_ENGINEER):
+            assert engine.apply(project, A).passed is True

@@ -19,6 +19,9 @@ der Einrichtung von Collaboration-Plattformen auf Basis des Microsoft-Stacks.
 
 ### Business Intelligence / Reporting
 - Power BI
+- DAX / DAX-Formeln
+- Power Query
+- Datenaufbereitung
 - Power BI Dashboard
 - Power BI Reporting
 - Management Reporting
@@ -44,6 +47,9 @@ der Einrichtung von Collaboration-Plattformen auf Basis des Microsoft-Stacks.
 - <!-- [PLACEHOLDER] Weitere Bezeichnungen eintragen -->
 
 ## Erfahrungshinweise
+
+- **Power BI:** praktische, selbst ausgeführte Arbeit mit DAX-Formeln und
+  Power Query (vom Nutzer am 10.10.2026 ausdrücklich bestätigt).
 
 <!-- [PLACEHOLDER] Konkrete Projekte / Erfahrungen aus dem Lebenslauf eintragen.
      Keine Einträge vorhanden ohne Nutzerbestätigung. -->

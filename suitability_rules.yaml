@@ -35,7 +35,9 @@ suitability:
 
   # Einstufung des Gesamtwerts (0–100)
   thresholds:
-    high: 50      # ab hier "hoch"
+    high: 45      # ab hier "hoch" — drei Treffer hoher Priorität genügen,
+                  # auch ohne Senior-/Beratungsbegriff im Text; liegt über dem
+                  # Deckel für Spezialistenrollen (40)
     medium: 25    # ab hier "mittel", darunter "niedrig"
 
   # Höchstwert bei Ablehnung wegen einer nicht belegten Muss-Anforderung
@@ -48,8 +50,14 @@ suitability:
     # ─────────────────────────────────────────────────────────────────────────
     automation_bi:
       high:
-        # Power BI, Management Reporting, KPI-Dashboards
+        # Power BI, DAX, Power Query, Datenaufbereitung, KPI-Dashboards,
+        # Management Reporting (praktische Erfahrung)
         - "Power BI"
+        - "Power Query"
+        # "DAX" zählt nur im Power-BI-Zusammenhang, nicht bei "DAX-Konzern"
+        - term: "DAX"
+          with: ["Power BI", "Power Query", "DAX-Formel*", "DAX-Measure*", "Measure*"]
+        - "Datenaufbereitung"
         - "Management Reporting"
         - "KPI-Dashboard*"
         - "KPI-Reporting"
@@ -230,6 +238,41 @@ suitability:
           - "Red Team*"
           - "SIEM"
           - "SOC"
+
+      # Praktische Power-BI-Arbeit (Berichte, DAX, Power Query, Dashboards) ist
+      # belegt. Nicht belegt sind Data-Engineering-/Plattform-Spezialisierungen
+      # und Zertifikate; sie deckeln nur, wenn sie zwingend verlangt werden.
+      - label: "Reine Data-Engineering-/BI-Plattform-Spezialistenrolle"
+        score_cap: 40
+        title_terms:
+          - "Data Engineer*"
+          - "Data Scientist*"
+          - "Data Architect*"
+          - "Datenarchitekt*"
+          - "BI-Architekt*"
+          - "Data Warehouse*"
+          - "DWH*"
+          - "Databricks"
+          - "Snowflake"
+        required_experience_terms:
+          - "Data Warehouse*"
+          - "DWH*"
+          - "Data Vault"
+          - "Databricks"
+          - "Snowflake"
+          - "Azure Synapse"
+          - "Synapse Analytics"
+          - "Azure Data Factory"
+          - "Data Lake*"
+          - "PySpark"
+          - "Python"
+          - "SSIS"
+          - "SSAS"
+          - "Tabular Editor"
+          - "PL-300"
+          - "DP-600"
+          - "DP-500"
+          - "Microsoft Certified*"
 
   # Rahmenbedingungen — getrennt von der fachlichen Eignung ───────────────────
   # Jede Angabe erhält einen Status: erfüllt / teilweise / nicht erfüllt /
