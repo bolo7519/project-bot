@@ -190,3 +190,43 @@ search_group_filters:
       - "Endpoint Security"
       - "Microsoft Defender"
       - "Zero Trust"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RSS-Vorfilter: spart Projektseiten-Abrufe.
+#
+# Steht im TITEL eines neuen Feed-Eintrags einer dieser Berufsbegriffe UND
+# kommt in Titel und RSS-Kurztext kein einziger Fachbegriff einer Suchgruppe
+# vor, gilt der Eintrag als fachfremd, ohne dass die Projektseite geladen wird.
+# Sobald ein Fachbegriff im RSS-Text steht, wird die Seite wie gewohnt geladen.
+#
+# Zunächst konservativ: nur Berufsbezeichnungen aus Medizin/Pflege,
+# Buchhaltung, Recruiting, Grafik/Übersetzung und Handwerk. Projektleiter-,
+# Manager- und Ingenieurstitel stehen bewusst NICHT hier, auch wenn sie
+# fachfremd wirken — dort entscheidet weiterhin der Text der Projektseite. Eine leere Liste
+# schaltet den Vorfilter ab; dann wird jede neue Projektseite einmal geladen.
+# In config.yaml lässt sich die Liste über `rss_prefilter.title_exclude_terms`
+# überschreiben.
+# ─────────────────────────────────────────────────────────────────────────────
+rss_prefilter:
+  title_exclude_terms:
+    - "Assistenzarzt*"
+    - "Facharzt*"
+    - "Arzt"
+    - "Ärztin"
+    - "Pflegefachkraft*"
+    - "Pflegekraft*"
+    - "Buchhalter*"
+    - "Anlagenbuchhalter*"
+    - "Finanzbuchhalter*"
+    - "Bilanzbuchhalter*"
+    - "Lohnbuchhalter*"
+    - "Steuerfachangestellte*"
+    - "Recruiter*"
+    - "Grafiker*"
+    - "Grafikdesigner*"
+    - "Werbedesigner*"
+    - "Übersetzer*"
+    - "Schweißer*"
+    - "Elektriker*"
+    - "Elektroniker*"
+    - "Mechatroniker*"

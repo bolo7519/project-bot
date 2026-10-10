@@ -10,7 +10,7 @@ import imaplib
 import email
 import re
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
 
@@ -2039,11 +2039,16 @@ def run_rss_ingestion_for_search_groups(
     output_dir: str = 'projects',
     dry_run: bool = False,
     group_ids: List[str] = None,
+    page_delay: float = 0.0,
+    max_page_requests: Optional[int] = None,
+    reevaluate_filtered: bool = False,
 ) -> Dict[str, Any]:
     """
     Run RSS ingestion for all (or specified) enabled search groups.
 
-    Each group uses its own feed URLs, keywords and limits from config.
+    Jeder Feed wird je Lauf nur einmal geladen und für alle abonnierenden
+    Gruppen ausgewertet; ein Seen-Ledger verhindert wiederholte Abrufe
+    derselben Projektseite (siehe rss_feed_pipeline.py).
     Projects found by multiple groups are merged (no duplicate files).
 
     Args:
@@ -2051,11 +2056,17 @@ def run_rss_ingestion_for_search_groups(
         output_dir: Directory for project files.
         dry_run: If True, simulate without side effects.
         group_ids: Optional subset of group IDs to run. None = all enabled groups.
+        page_delay: Pause in Sekunden zwischen zwei Projektseiten-Abrufen.
+        max_page_requests: Obergrenze der Projektseiten-Abrufe je Lauf
+            (None = Standardwert der Pipeline).
+        reevaluate_filtered: Früher gefilterte Einträge nach geänderten
+            Suchbegriffen neu bewerten, auch wenn sie nicht mehr im Feed stehen.
 
     Returns:
         Summary dict keyed by group_id.
     """
     from search_group_config import apply_default_topic_filters, load_search_groups
+    from rss_feed_pipeline import DEFAULT_MAX_PAGE_REQUESTS, run_shared_feed_ingestion
 
     # Fachliche Einschlusskriterien je Gruppe ergänzen (search_group_filters.yaml)
     config = apply_default_topic_filters(config)
@@ -2063,33 +2074,16 @@ def run_rss_ingestion_for_search_groups(
     agent = EmailAgent(config)
     groups = load_search_groups(config)
 
-    total_summary: Dict[str, Any] = {
-        'dry_run': dry_run,
-        'groups_processed': 0,
-        'total_entries_found': 0,
-        'total_projects_saved': 0,
-        'total_urls_skipped_dedupe': 0,
-        'total_projects_filtered': 0,
-        'total_errors': 0,
-        'group_summaries': {},
-    }
-
-    for group_id, group_cfg in groups.items():
-        if not group_cfg.enabled:
-            continue
-        if group_ids is not None and group_id not in group_ids:
-            continue
-
-        summary = agent.run_rss_ingestion_for_group(group_cfg, output_dir, dry_run)
-        total_summary['group_summaries'][group_id] = summary
-        total_summary['groups_processed'] += 1
-        total_summary['total_entries_found'] += summary.get('entries_found', 0)
-        total_summary['total_projects_saved'] += summary.get('projects_saved', 0)
-        total_summary['total_urls_skipped_dedupe'] += summary.get('urls_skipped_dedupe', 0)
-        total_summary['total_projects_filtered'] += summary.get('projects_filtered', 0)
-        total_summary['total_errors'] += summary.get('errors', 0)
-
-    return total_summary
+    return run_shared_feed_ingestion(
+        agent, config, groups,
+        output_dir=output_dir,
+        dry_run=dry_run,
+        group_ids=group_ids,
+        page_delay=page_delay,
+        max_page_requests=(
+            DEFAULT_MAX_PAGE_REQUESTS if max_page_requests is None else max_page_requests),
+        reevaluate_filtered=reevaluate_filtered,
+    )
 
 
 def run_full_workflow_for_search_groups(

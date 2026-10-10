@@ -412,7 +412,8 @@ def _run_pipeline(output_dir: str) -> dict:
                 f"{schema['description']}\n")
 
     with (
-        patch("email_agent.EmailAgent.fetch_rss_feed", return_value=entries),
+        patch("email_agent.EmailAgent.fetch_rss_feed",
+              side_effect=lambda url, *a, **k: entries if "/de.xml" in url else []),
         patch("email_agent.EmailAgent.load_adapter") as mock_load_adapter,
         patch("email_agent.MarkdownRenderer") as mock_renderer_cls,
     ):

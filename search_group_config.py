@@ -61,7 +61,7 @@ class RSSChannelConfig:
     """RSS-Kanaleinstellungen für eine Suchgruppe + Provider-Kombination."""
     feed_urls: List[str]
     max_age_days: int = 7
-    limit: int = 20
+    limit: int = 25   # FreelancerMap liefert je Feed 25 Einträge
     url_exclude_patterns: List[str] = field(default_factory=list)
 
     @classmethod
@@ -69,7 +69,7 @@ class RSSChannelConfig:
         return cls(
             feed_urls=list(d.get("feed_urls", [])),
             max_age_days=int(d.get("max_age_days", 7)),
-            limit=int(d.get("limit", 20)),
+            limit=int(d.get("limit", 25)),
             url_exclude_patterns=list(d.get("url_exclude_patterns", [])),
         )
 
@@ -314,6 +314,26 @@ def load_default_topic_filters(path: Optional[Path] = None) -> Dict[str, Dict[st
 
     raw = data.get("search_group_filters") or {}
     return {gid: dict(v) for gid, v in raw.items() if isinstance(v, dict)}
+
+
+def load_rss_prefilter(path: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Liest den RSS-Vorfilter (``rss_prefilter``) aus search_group_filters.yaml.
+
+    Returns:
+        Dict mit ``title_exclude_terms`` (Liste); leer, wenn nichts konfiguriert ist.
+    """
+    import yaml
+
+    filters_path = Path(path) if path is not None else DEFAULT_TOPIC_FILTERS_PATH
+    try:
+        with open(filters_path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("RSS-Vorfilter nicht lesbar: %s (%s)", filters_path, exc)
+        return {}
+    prefilter = data.get("rss_prefilter") or {}
+    return prefilter if isinstance(prefilter, dict) else {}
 
 
 def apply_default_topic_filters(
