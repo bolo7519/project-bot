@@ -173,11 +173,69 @@ suitability:
         - "Projektleit*"
         - "Interim"
 
-    # Remote bevorzugt
-    work_mode:
-      remote_points: 10
-      hybrid_points: 5
-      onsite_points: -20
+    # Nicht belegte Spezialisierungen. Ablehnung nur, wenn Begriff im Titel UND
+    # im Muss-Abschnitt; nur im Muss-Abschnitt → Abzug; Erwähnung → nichts.
+    unsupported_must_haves:
+      - label: "Pega-Entwicklung"
+        terms:
+          - "Pega"
+      - label: "SAP-Entwicklung/-Scripting"
+        terms:
+          - "Winshuttle"
+          - "ABAP"
+          - "SAP FI"
+          - "SAP-Entwickl*"
+          - "SAP Scripting"
+
+    # Reine Spezialistenrollen: Viele passende Schlagworte dürfen fehlende,
+    # zwingend geforderte Spezialerfahrung nicht überdecken. Die fachliche
+    # Eignung wird auf `score_cap` begrenzt (keine Ablehnung), wenn
+    #   - der Titel eine Spezialistenrolle nennt UND der Anforderungsabschnitt
+    #     mindestens eine Spezialerfahrung verlangt, oder
+    #   - der Anforderungsabschnitt mindestens zwei Spezialerfahrungen verlangt.
+    # Infrastrukturberatung mit Security-Anteil (Firewalls, Segmentierung,
+    # Sicherheitskonzepte) ist davon nicht betroffen.
+    specialist_roles:
+      - label: "Reine Cybersecurity-Spezialistenrolle"
+        score_cap: 40
+        title_terms:
+          - "Cybersecurity"
+          - "Cyber Security"
+          - "Security Engineer*"
+          - "Security Analyst*"
+          - "Security Architect*"
+          - "SOC*"
+          - "Pentest*"
+          - "Penetration*"
+          - "Red Team*"
+          - "Schwachstellenmanagement"
+          - "Vulnerability*"
+          - "Threat*"
+        required_experience_terms:
+          - "technischen Informationssicherheit"
+          - "technische Informationssicherheit"
+          - "Cyber Threat*"
+          - "Cyberangriff*"
+          - "Cyberbedrohung*"
+          - "Angriffsmuster"
+          - "Angriffsmethoden"
+          - "Attack Surface*"
+          - "Schwachstellenmanagement"
+          - "Vulnerability Management"
+          - "Cyber Risk*"
+          - "Penetrationstest*"
+          - "Pentest*"
+          - "Incident Response"
+          - "Threat Hunting"
+          - "Red Team*"
+          - "SIEM"
+          - "SOC"
+
+  # Rahmenbedingungen — getrennt von der fachlichen Eignung ───────────────────
+  # Jede Angabe erhält einen Status: erfüllt / teilweise / nicht erfüllt /
+  # unbekannt. Fehlende Angaben gelten als "unbekannt", nie als erfüllt.
+  conditions:
+    work_mode:               # Remote bevorzugt
       onsite_only:
         - "kein Remote"
         - "Full-Onsite"
@@ -194,31 +252,19 @@ suitability:
         - "Remote"
         - "Homeoffice"
         - "Home Office"
+    workload:                # 20–40 Stunden pro Woche bevorzugt
+      preferred_hours_min: 20
+      preferred_hours_max: 40
+      full_time_hours: 40
+    # Abzüge im Gesamtwert bei verletzten Rahmenbedingungen (keine Zuschläge)
+    score_adjustments:
+      onsite_only: -20
+      workload_outside: -10
 
-    # 20–40 Stunden pro Woche bevorzugt: Teilzeit-Angaben leicht positiv,
-    # Vollzeit (40 h) neutral
-    workload:
-      points: 5
-      terms:
-        - "Teilzeit"
-        - "20 Stunden"
-        - "24 Stunden"
-        - "30 Stunden"
-        - "2-3 Tage"
-        - "3 Tage pro Woche"
-        - "50 %"
-        - "60 %"
-
-    # Nicht belegte Spezialisierungen. Ablehnung nur, wenn Begriff im Titel UND
-    # im Muss-Abschnitt; nur im Muss-Abschnitt → Abzug; Erwähnung → nichts.
-    unsupported_must_haves:
-      - label: "Pega-Entwicklung"
-        terms:
-          - "Pega"
-      - label: "SAP-Entwicklung/-Scripting"
-        terms:
-          - "Winshuttle"
-          - "ABAP"
-          - "SAP FI"
-          - "SAP-Entwickl*"
-          - "SAP Scripting"
+  # Verfügbarkeit des Bewerbers. null = nicht konfiguriert: der Starttermin
+  # wird dann nur angezeigt, nicht geprüft, und es gibt keinen Abzug.
+  # Setzen entweder hier oder (Vorrang) in config.yaml:
+  #   applicant:
+  #     available_from: "2026-12-01"
+  applicant:
+    available_from: null

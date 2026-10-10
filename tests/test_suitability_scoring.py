@@ -29,10 +29,17 @@ import yaml
 from filter_engine import FilterConfig, FilterEngine
 from pre_scorer import PROFILE_IDS
 from search_group_config import load_default_topic_filters
+from datetime import date
+
 from suitability_scorer import (
     DECISION_HIGH, DECISION_LOW, DECISION_MEDIUM, DECISION_REJECT,
+    RECOMMEND_APPLY, RECOMMEND_REVIEW, RECOMMEND_SKIP,
+    STATUS_CONFLICT, STATUS_NOT_CHECKED, STATUS_NOT_OK, STATUS_OK,
+    STATUS_PARTIAL, STATUS_UNKNOWN,
     SuitabilityScorer, _must_sections,
 )
+
+TODAY = date(2026, 10, 10)   # Bezugsdatum des Laufs
 
 REPO_ROOT = Path(__file__).parent.parent
 A, B = "automation_bi", "infra_security"
@@ -84,7 +91,8 @@ SAP = {
         "- Sehr gute Kenntnisse in SAP FI und SAP S/4HANA\n\n"
         "SOLL-Kriterien:\n\n"
         "- Kenntnisse im Umfeld SAP-Datenmigration und Prozessautomatisierung\n\n"
-        "Rahmenparameter:\n\n- Einsatzort: Remote aus Deutschland\n- Laufzeit: 15PT"
+        "Rahmenparameter:\n\n- Einsatzort: Remote aus Deutschland\n"
+        "- Laufzeit: Start asap - 15PT\n- Auslastung: 15 PT"
     ),
 }
 VULN = {
@@ -168,7 +176,7 @@ SOPHOS_INFRA = {
 
 @pytest.fixture(scope="module")
 def scorer():
-    return SuitabilityScorer()
+    return SuitabilityScorer(today=TODAY)
 
 
 @pytest.fixture(scope="module")
@@ -223,17 +231,22 @@ class TestRealProjectsBeforeAfter:
         assert r.decision == DECISION_LOW
         assert r.score < REAL_PROJECTS[key]["before"]
         assert r.reject_reason is None
-        assert any("vollständig vor Ort" in reason for reason in r.reasons)
+        assert r.conditions["work_mode"].status == STATUS_NOT_OK
         assert any("Niedrige Priorität" in reason for reason in r.reasons)
 
-    def test_senior_network_security_is_rated_higher(self, results):
+    def test_pure_cybersecurity_role_is_capped_not_rejected(self, results):
+        """Viele Infrastruktur-Schlagworte überdecken die geforderte Spezialerfahrung nicht."""
         r = results["netsec"]
-        assert r.decision == DECISION_HIGH
-        assert r.score > REAL_PROJECTS["netsec"]["before"]
-        assert r.best_group == B
+        assert r.technical_score == 40
+        assert r.decision == DECISION_MEDIUM
+        assert r.reject_reason is None
+        assert r.recommendation == RECOMMEND_REVIEW
+        assert any("Cybersecurity-Spezialistenrolle" in x and "begrenzt" in x for x in r.reasons)
+        # ohne Deckel wären es 79 Punkte gewesen
+        assert any("(+45)" in x for x in r.reasons) and any("(+24)" in x for x in r.reasons)
 
-    def test_specialised_vulnerability_role_ranks_below_network_security(self, results):
-        assert results["vuln"].score < results["netsec"].score
+    def test_vulnerability_role_stays_below_network_security(self, results):
+        assert results["vuln"].technical_score < results["netsec"].technical_score
         assert results["vuln"].decision == DECISION_MEDIUM
         assert any("Schwachstellenmanagement" in reason for reason in results["vuln"].reasons)
 
@@ -245,11 +258,19 @@ class TestRealProjectsBeforeAfter:
         assert len(transferable) == 1 and "n8n" in transferable[0] and "(+4)" in transferable[0]
 
     def test_ranking_after(self, results):
-        order = sorted(results, key=lambda k: results[k].score, reverse=True)
-        assert order[0] == "netsec"
-        assert set(order[1:3]) == {"vuln", "n8n"}
+        order = sorted(results, key=lambda k: results[k].technical_score, reverse=True)
+        assert set(order[:3]) == {"netsec", "vuln", "n8n"}
         assert set(order[3:]) == {
             "pega", "sap", "supporter_bad_toelz", "supporter_freiburg", "supporter_rottweil",
+        }
+
+    def test_recommendations(self, results):
+        got = {k: r.recommendation for k, r in results.items()}
+        assert got == {
+            "n8n": RECOMMEND_REVIEW, "vuln": RECOMMEND_REVIEW, "netsec": RECOMMEND_REVIEW,
+            "pega": RECOMMEND_SKIP, "sap": RECOMMEND_SKIP,
+            "supporter_bad_toelz": RECOMMEND_SKIP, "supporter_freiburg": RECOMMEND_SKIP,
+            "supporter_rottweil": RECOMMEND_SKIP,
         }
 
     def test_every_result_has_reasons(self, results):
@@ -268,7 +289,8 @@ class TestPriorityExamples:
         r = scorer.score_project(POWER_BI)
         assert r.decision == DECISION_HIGH and r.best_group == A
         assert any("Power BI" in reason for reason in r.reasons)
-        assert any("Teilzeit" in reason for reason in r.reasons)
+        assert r.recommendation == RECOMMEND_APPLY
+        assert r.conditions["workload"].status == STATUS_OK
 
     def test_sophos_infrastructure_project_scores_high(self, scorer):
         r = scorer.score_project(SOPHOS_INFRA)
@@ -277,11 +299,11 @@ class TestPriorityExamples:
 
     def test_priority_examples_beat_all_low_rated_real_projects(self, scorer, results):
         best_low = max(
-            r.score for r in results.values()
+            r.technical_score for r in results.values()
             if r.decision in (DECISION_LOW, DECISION_REJECT)
         )
-        assert scorer.score_project(POWER_BI).score > best_low
-        assert scorer.score_project(SOPHOS_INFRA).score > best_low
+        assert scorer.score_project(POWER_BI).technical_score > best_low
+        assert scorer.score_project(SOPHOS_INFRA).technical_score > best_low
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,7 +321,7 @@ class TestNoBlanketExclusion:
                         + " Die Buchhaltung arbeitet mit SAP FI; eine Schnittstelle folgt später.")
         r_base, r_sap = scorer.score_project(base), scorer.score_project(with_sap)
         assert r_sap.decision != DECISION_REJECT
-        assert r_sap.score == r_base.score
+        assert r_sap.technical_score == r_base.technical_score
 
     def test_must_have_without_title_is_penalised_not_rejected(self, scorer):
         project = {
@@ -352,8 +374,6 @@ class TestRulesConfiguration:
         group = rules["suitability"]["groups"][A]
         assert group["transferable"] == ["n8n"]
         assert "n8n" not in group["high"] + group["medium"]
-        for profile in (REPO_ROOT / "competency_profiles").glob("*.md"):
-            assert "n8n" not in profile.read_text("utf-8"), profile.name
 
     def test_stated_priorities_are_present(self):
         rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
@@ -439,9 +459,12 @@ class TestPipelineStoresSuitability:
     def test_suitability_and_all_four_profiles_are_stored(self, run):
         _out, _summary, files = run
         for key, (_md, fm) in files.items():
-            assert fm["suitability"]["reasons"], key
+            suit = fm["suitability"]
+            assert suit["technical"]["reasons"], key
+            assert set(suit["conditions"]) == {"work_mode", "workload", "start"}
+            assert suit["recommendation"] in (RECOMMEND_APPLY, RECOMMEND_REVIEW, RECOMMEND_SKIP)
             assert {p["profile_id"] for p in fm["pre_scores"]["profiles"]} == set(PROFILE_IDS)
-        assert files["netsec"][1]["suitability"]["decision"] == DECISION_HIGH
+        assert files["netsec"][1]["suitability"]["technical"]["decision"] == DECISION_MEDIUM
 
     def test_dashboard_score_line_uses_suitability(self, run):
         """Die Score-Zeile im Text (vom Dashboard gelesen) zeigt die Eignungsbewertung."""
@@ -461,3 +484,306 @@ class TestPipelineStoresSuitability:
         assert _suitability_score_from_frontmatter("# ohne Frontmatter\n") is None
         assert _suitability_score_from_frontmatter(
             "---\nsuitability:\n  score: 42\n---\n\n# x\n") == 42
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7 — Spezialistenrolle vs. Infrastrukturberatung mit Security-Anteil
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSpecialistRoles:
+
+    def test_infrastructure_consulting_with_security_share_is_not_capped(self, scorer):
+        project = {
+            "title": "Senior Berater IT-Infrastruktur und Security (m/w/d)",
+            "description": (
+                "Modernisierung der Standortvernetzung. Remote.\n"
+                "Anforderungen:\n"
+                "- Erfahrung mit Firewalls, VPN und Netzwerksegmentierung\n"
+                "- Erstellung von Sicherheitskonzepten für die IT-Infrastruktur"
+            ),
+        }
+        r = scorer.score_project(project)
+        assert r.decision == DECISION_HIGH
+        assert not any("Spezialistenrolle" in x for x in r.reasons)
+        assert r.recommendation == RECOMMEND_APPLY
+
+    def test_security_project_is_not_rejected_across_the_board(self, scorer, results):
+        for key in ("netsec", "vuln"):
+            assert results[key].decision != DECISION_REJECT
+            assert results[key].recommendation != RECOMMEND_SKIP
+
+    def test_neutral_title_with_two_required_specialisations_is_capped(self, scorer):
+        project = {
+            "title": "Senior Consultant IT-Infrastruktur (m/w/d)",
+            "description": (
+                "Firewalls, VPN, Netzwerksegmentierung, Standortvernetzung, Sophos. Remote.\n"
+                "Anforderungen:\n"
+                "- Mehrjährige Erfahrung mit Penetrationstests und Incident Response"
+            ),
+        }
+        r = scorer.score_project(project)
+        assert r.technical_score <= 40 and r.decision != DECISION_HIGH
+        assert r.reject_reason is None
+        assert any("Spezialistenrolle" in x for x in r.reasons)
+
+    def test_specialist_title_without_required_experience_is_not_capped(self, scorer):
+        project = {
+            "title": "Projektleiter Cybersecurity-Programm: Firewall-Erneuerung (m/w/d)",
+            "description": (
+                "Technische Projektleitung für die Ablösung der Firewalls durch Sophos, "
+                "Netzwerksegmentierung und VPN. Remote.\n"
+                "Anforderungen:\n- Erfahrung in der Leitung von IT-Infrastrukturprojekten"
+            ),
+        }
+        r = scorer.score_project(project)
+        assert r.decision == DECISION_HIGH
+        assert not any("Spezialistenrolle" in x for x in r.reasons)
+
+    def test_single_specialisation_mentioned_in_tasks_only_has_no_effect(self, scorer):
+        project = {
+            "title": "Senior Berater IT-Infrastruktur (m/w/d)",
+            "description": (
+                "Aufgaben: Modernisierung der Firewalls, Abstimmung mit dem SOC und dem "
+                "Team für Penetrationstests. Remote.\n"
+                "Anforderungen:\n- Erfahrung mit Firewalls und VPN"
+            ),
+        }
+        assert not any("Spezialistenrolle" in x for x in scorer.score_project(project).reasons)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 8 — Rahmenbedingungen: getrennt, "unbekannt" statt "erfüllt"
+# ══════════════════════════════════════════════════════════════════════════════
+
+BASE = {
+    "title": "Senior Power BI Consultant – Management Reporting (m/w/d)",
+    "description": "Aufbau von KPI-Dashboards auf Basis von SharePoint.",
+}
+
+
+def _with(extra: str) -> dict:
+    return dict(BASE, description=BASE["description"] + "\n" + extra)
+
+
+class TestConditions:
+
+    def test_missing_information_is_unknown_not_fulfilled(self, scorer):
+        r = scorer.score_project(BASE)
+        assert {k: c.status for k, c in r.conditions.items()} == {
+            "work_mode": STATUS_UNKNOWN, "workload": STATUS_UNKNOWN, "start": STATUS_UNKNOWN,
+        }
+        assert all(c.value is None for c in r.conditions.values())
+        assert any("Offen (unbekannt): Arbeitsort, Auslastung, Starttermin" in x
+                   for x in r.recommendation_reasons)
+
+    def test_conditions_do_not_change_technical_score(self, scorer):
+        base = scorer.score_project(BASE).technical_score
+        for extra in ("Einsatz: Remote", "Einsatz: Full-Onsite, kein Remote",
+                      "Auslastung: 100 %", "10 Stunden pro Woche", "Start: asap"):
+            assert scorer.score_project(_with(extra)).technical_score == base, extra
+
+    @pytest.mark.parametrize("extra,status,value", [
+        ("Ort: Remote", STATUS_OK, "remote"),
+        ("Einsatzort: 100% Remote", STATUS_OK, "100 % remote"),
+        ("Einsatz: 80% Remote, Rest in Köln", STATUS_PARTIAL, "80 % remote"),
+        ("Einsatz: hybrid in München", STATUS_PARTIAL, "hybrid"),
+        ("Einsatz: Full-Onsite, kein Remote", STATUS_NOT_OK, "vollständig vor Ort"),
+    ])
+    def test_work_mode(self, scorer, extra, status, value):
+        check = scorer.score_project(_with(extra)).conditions["work_mode"]
+        assert (check.status, check.value) == (status, value)
+
+    @pytest.mark.parametrize("extra,status,value", [
+        ("Auslastung: Vollzeit", STATUS_OK, "Vollzeit (40 h/Woche)"),
+        ("**Auslastung:** 100 %", STATUS_OK, "100 % (40 h/Woche)"),
+        ("Auslastung: 50 %", STATUS_OK, "50 % (20 h/Woche)"),
+        ("Umfang: 20-30 Stunden pro Woche", STATUS_OK, "20–30 h/Woche"),
+        ("Umfang: 3 Tage pro Woche", STATUS_OK, "3 Tage pro Woche (24 h/Woche)"),
+        ("Umfang: 10 Stunden pro Woche", STATUS_NOT_OK, "10 h/Woche"),
+        ("Umfang: 1 Tage pro Woche", STATUS_NOT_OK, "1 Tage pro Woche (8 h/Woche)"),
+        ("In Teilzeit möglich", STATUS_UNKNOWN, "Teilzeit"),
+        ("Laufzeit: 15 PT", STATUS_UNKNOWN, None),
+    ])
+    def test_workload(self, scorer, extra, status, value):
+        check = scorer.score_project(_with(extra)).conditions["workload"]
+        assert (check.status, check.value) == (status, value)
+
+    def test_violated_condition_limits_recommendation_not_technical_rating(self, scorer):
+        r = scorer.score_project(_with("Einsatz: Full-Onsite, kein Remote"))
+        assert r.decision == DECISION_HIGH
+        assert r.recommendation == RECOMMEND_REVIEW
+        assert r.score == r.technical_score - 20
+
+    def test_no_bonus_for_fulfilled_conditions(self, scorer):
+        r = scorer.score_project(_with("Ort: Remote\nAuslastung: 50 %"))
+        assert r.score == r.technical_score
+        assert r.recommendation == RECOMMEND_APPLY
+
+    def test_real_projects_conditions(self, results):
+        got = {
+            k: (r.conditions["work_mode"].status, r.conditions["workload"].status,
+                r.conditions["start"].value)
+            for k, r in results.items()
+        }
+        assert got["n8n"] == (STATUS_UNKNOWN, STATUS_UNKNOWN, None)
+        assert got["pega"] == (STATUS_OK, STATUS_OK, "sofort bis spätestens 01.11.2026")
+        assert got["sap"] == (STATUS_OK, STATUS_UNKNOWN, "sofort")
+        assert got["vuln"] == (STATUS_OK, STATUS_OK, "19.10.2026")
+        assert got["netsec"] == (STATUS_OK, STATUS_OK, "19.10.2026")
+        assert got["supporter_rottweil"][:2] == (STATUS_NOT_OK, STATUS_OK)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9 — Starttermin und Verfügbarkeit
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAvailability:
+
+    def test_rules_file_has_no_availability_configured(self):
+        rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
+        assert rules["suitability"]["applicant"]["available_from"] is None
+
+    def test_without_availability_start_is_shown_but_not_checked(self, results):
+        for key in ("vuln", "netsec", "pega", "sap"):
+            start = results[key].conditions["start"]
+            assert start.status == STATUS_NOT_CHECKED, key
+            assert "nicht konfiguriert" in start.note
+        assert results["n8n"].conditions["start"].status == STATUS_UNKNOWN
+
+    def test_without_availability_there_is_no_deduction(self, scorer):
+        r = scorer.score_project(_with("Ort: Remote\nStart: asap"))
+        assert r.score == r.technical_score
+        assert r.recommendation == RECOMMEND_APPLY
+        assert any("nicht gegen eine Verfügbarkeit geprüft" in x for x in r.recommendation_reasons)
+
+    def test_clear_conflict_limits_recommendation(self):
+        scorer = SuitabilityScorer(available_from="2026-12-01", today=TODAY)
+        r = scorer.score_project(_with("Ort: Remote\nZeitraum: 19.10.2026 – 30.06.2027"))
+        assert r.decision == DECISION_HIGH                 # fachlich unverändert
+        assert r.conditions["start"].status == STATUS_CONFLICT
+        assert r.recommendation == RECOMMEND_REVIEW        # statt Bewerben
+        assert r.score == r.technical_score                # kein Punktabzug
+
+    def test_start_after_availability_is_fulfilled(self):
+        scorer = SuitabilityScorer(available_from="2026-12-01", today=TODAY)
+        r = scorer.score_project(_with("Ort: Remote\nStart: Januar 2027"))
+        assert r.conditions["start"].status == STATUS_OK
+        assert r.recommendation == RECOMMEND_APPLY
+
+    def test_start_window_uses_latest_possible_date(self):
+        scorer = SuitabilityScorer(available_from="2026-12-01", today=TODAY)
+        text = "Start: ab ca. Mitte November / ab Dezember möglich"
+        start = scorer.score_project(_with(text)).conditions["start"]
+        assert (start.status, start.value) == (STATUS_OK, "spätestens 01.12.2026")
+
+    def test_immediate_start_conflicts_with_later_availability(self):
+        scorer = SuitabilityScorer(available_from="2026-12-01", today=TODAY)
+        start = scorer.score_project(_with("Start: asap")).conditions["start"]
+        assert (start.status, start.value) == (STATUS_CONFLICT, "sofort")
+
+    def test_unknown_start_is_never_a_conflict(self):
+        scorer = SuitabilityScorer(available_from="2026-12-01", today=TODAY)
+        assert scorer.score_project(BASE).conditions["start"].status == STATUS_UNKNOWN
+
+    def test_invalid_availability_is_ignored(self):
+        scorer = SuitabilityScorer(available_from="irgendwann", today=TODAY)
+        start = scorer.score_project(_with("Start: asap")).conditions["start"]
+        assert start.status == STATUS_NOT_CHECKED
+
+    def test_config_yaml_availability_reaches_pipeline(self, tmp_path):
+        """applicant.available_from aus config.yaml wird an die Bewertung übergeben."""
+        from email_agent import EmailAgent
+        captured = {}
+
+        class FakeScorer:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def score_project(self, _schema):
+                raise RuntimeError("nicht nötig")
+
+        config = yaml.safe_load((REPO_ROOT / "search_groups_patch.yaml").read_text("utf-8"))
+        config["providers"] = {"freelancermap": {"enabled": True, "channels": {"rss": {}}}}
+        config["applicant"] = {"available_from": "2026-12-01"}
+        from search_group_config import load_search_groups
+        group = load_search_groups(config)[A]
+        with (
+            patch("email_agent.SuitabilityScorer", FakeScorer),
+            patch("email_agent.EmailAgent.load_adapter", return_value=MagicMock()),
+        ):
+            EmailAgent(config).process_rss_entries(
+                [], {"provider_id": "freelancermap"}, str(tmp_path),
+                search_group_id=A, search_group_config=group,
+            )
+        assert captured == {"available_from": "2026-12-01"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10 — Kompetenzprofile: nur belegte Angaben
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _profile_keywords(name: str) -> str:
+    """Profiltext ohne HTML-Kommentare (so, wie PreScorer und LLM-Prompt ihn sehen)."""
+    import re
+    text = (REPO_ROOT / "competency_profiles" / f"{name}.md").read_text("utf-8")
+    return re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+
+
+class TestCompetencyProfiles:
+
+    @pytest.mark.parametrize("term", [
+        "HubSpot", "Zoho", "Pipedrive", "SAP CRM", "Dynamics",
+        "n8n", "Pega", "ABAP", "Winshuttle",
+        "CCNA", "CCNP", "MCSE", "Cisco",
+        "Tableau", "Qlik", "MuleSoft", "Boomi", "Kubernetes", "Terraform",
+        "Penetration", "SIEM", "SOC",
+    ])
+    def test_unverified_terms_are_not_profile_keywords(self, term):
+        for profile in PROFILE_IDS:
+            assert term.lower() not in _profile_keywords(profile).lower(), (term, profile)
+
+    def test_stated_experience_is_present(self):
+        crm = _profile_keywords("crm_sales_automation")
+        for term in ("Bitrix24", "Salesforce", "Make.com", "Zapier", "ActiveCampaign"):
+            assert term in crm, term
+        assert "vorkonfigurierten, individuell angepassten App-Integrationen" in crm
+        infra = _profile_keywords("it_infrastructure_security")
+        for term in ("Sophos", "Firewall", "VPN", "WAN", "Routing", "Switching"):
+            assert term in infra, term
+
+    def test_power_bi_stays_highly_prioritised(self):
+        from pre_scorer import PreScorer
+        rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
+        assert rules["suitability"]["groups"][A]["high"][0] == "Power BI"
+        result = PreScorer().score_project(POWER_BI)
+        assert result.best_profile == "power_bi_sharepoint"
+
+    def test_each_profile_still_ranks_its_own_topic_first(self):
+        from pre_scorer import PreScorer
+        scorer = PreScorer()
+        assert scorer.loaded_profile_ids == PROFILE_IDS
+        samples = {
+            "crm_sales_automation": "CRM-Berater Bitrix24 und Salesforce, CRM-Integration",
+            "ai_business_process_integration":
+                "Geschäftsprozessautomatisierung, KI-Integration, Prozessdigitalisierung",
+            "it_infrastructure_security":
+                "Sophos Firewall, VPN, WAN, Netzwerksegmentierung, IT-Infrastrukturmodernisierung",
+            "power_bi_sharepoint": "Power BI Management Reporting, KPI-Dashboard, SharePoint",
+        }
+        for profile, text in samples.items():
+            assert scorer.score_text(text).best_profile == profile, profile
+
+    def test_llm_profile_summary_contains_no_comment_text(self):
+        """Mehrzeilige Kommentare dürfen nicht als Keywords in den LLM-Prompt gelangen."""
+        import inspect
+        import llm_evaluator
+        builder_cls = next(
+            cls for _n, cls in inspect.getmembers(llm_evaluator, inspect.isclass)
+            if hasattr(cls, "_profile_summary")
+        )
+        builder = object.__new__(builder_cls)
+        text = (REPO_ROOT / "competency_profiles" / "crm_sales_automation.md").read_text("utf-8")
+        summary = builder._profile_summary(text, max_chars=5000)
+        assert "Bitrix24" in summary
+        for unwanted in ("n8n", "Pega", "Nicht als Keyword", "STAND", "-->"):
+            assert unwanted not in summary, unwanted

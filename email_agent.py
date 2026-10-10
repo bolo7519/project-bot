@@ -1124,7 +1124,14 @@ class EmailAgent:
                     )
             # Eignungsbewertung (regelbasiert, lokal) — getrennt von der Erfassung
             try:
-                suitability_scorer = SuitabilityScorer()
+                # Verfügbarkeit nur, wenn in config.yaml ausdrücklich gesetzt
+                # (applicant.available_from); sonst gilt suitability_rules.yaml.
+                applicant_cfg = self.config.get('applicant') or {}
+                if 'available_from' in applicant_cfg:
+                    suitability_scorer = SuitabilityScorer(
+                        available_from=applicant_cfg.get('available_from'))
+                else:
+                    suitability_scorer = SuitabilityScorer()
             except Exception as exc:
                 self.logger.warning(
                     "SuitabilityScorer konnte nicht initialisiert werden — Eignungsbewertung deaktiviert",
