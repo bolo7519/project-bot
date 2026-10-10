@@ -22,6 +22,7 @@ Ergänze, entferne oder gewichte nach eigener Einschätzung.
 
 ### Systeme / Plattformen
 - Salesforce
+- Bitrix24
 - HubSpot
 - Microsoft Dynamics 365 / Dynamics CRM
 - Zoho CRM
@@ -32,7 +33,7 @@ Ergänze, entferne oder gewichte nach eigener Einschätzung.
 ### Automatisierung / Integration
 - Make.com / Integromat
 - Zapier
-- n8n
+- ActiveCampaign
 - Power Automate / Microsoft Flow
 - API-Integration
 - Webhook

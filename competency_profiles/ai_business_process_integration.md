@@ -33,7 +33,7 @@ der Automatisierung von Geschäftsprozessen in mittelständischen Organisationen
 - Business Process Management / BPM
 - Workflow-Automatisierung
 - Robotic Process Automation / RPA
-- Make.com / n8n / Zapier / Power Automate
+- Make.com / Zapier / Power Automate
 - Low-Code / No-Code
 - <!-- [PLACEHOLDER] Weitere Automatisierungs-Stacks eintragen -->
 

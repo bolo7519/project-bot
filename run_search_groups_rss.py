@@ -35,6 +35,22 @@ from pre_scorer import PreScorer
 _SCORE_LINE_RE = re.compile(r"- \*\*Score:\*\*\s*\d+/100", re.MULTILINE)
 
 
+def _suitability_score_from_frontmatter(content: str):
+    """Liest suitability.score aus dem YAML-Frontmatter; None, wenn nicht vorhanden."""
+    if not content.startswith("---"):
+        return None
+    end = content.find("\n---", 3)
+    if end == -1:
+        return None
+    try:
+        import yaml
+        frontmatter = yaml.safe_load(content[3:end]) or {}
+        score = (frontmatter.get("suitability") or {}).get("score")
+        return int(score) if score is not None else None
+    except Exception:
+        return None
+
+
 def _backfill_scores_for_new_files(output_dir: str, new_count: int) -> int:
     """
     Schreibt - **Score:** N/100 in neu angelegte Projektdateien, die
@@ -68,12 +84,15 @@ def _backfill_scores_for_new_files(output_dir: str, new_count: int) -> int:
         title_match = re.search(r"^#\s+(.*)", content, re.MULTILINE)
         title = title_match.group(1).strip() if title_match else md_path.stem
 
-        try:
-            result = scorer.score_project({"title": title, "description": content})
-        except Exception:
-            continue
-
-        score_100 = round((result.best_score or 0.0) * 100)
+        # Eignungsbewertung aus dem Frontmatter bevorzugen (suitability.score);
+        # ohne sie wie bisher der TF-IDF-Wert des besten Profils.
+        score_100 = _suitability_score_from_frontmatter(content)
+        if score_100 is None:
+            try:
+                result = scorer.score_project({"title": title, "description": content})
+            except Exception:
+                continue
+            score_100 = round((result.best_score or 0.0) * 100)
         score_line = f"- **Score:** {score_100}/100\n"
 
         if not content.endswith("\n"):
@@ -155,7 +174,8 @@ def main() -> None:
         print(
             f"    {group_id:<22}: {group_summary.get('projects_saved', 0)} neu, "
             f"{group_summary.get('urls_skipped_dedupe', 0)} bekannt, "
-            f"{group_summary.get('projects_filtered', 0)} fachfremd/gefiltert"
+            f"{group_summary.get('projects_filtered', 0)} fachfremd/gefiltert, "
+            f"{group_summary.get('projects_unsuitable', 0)} wegen Muss-Anforderung abgelehnt"
         )
     print(f"  Scores geschrieben       : {scored_count}")
     print(f"  Fehler                   : {summary['total_errors']}")

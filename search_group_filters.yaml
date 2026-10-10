@@ -37,6 +37,7 @@ search_group_filters:
       # CRM & Sales Automation
       - "CRM"
       - "Salesforce"
+      - "Bitrix24"
       - "HubSpot"
       - "Pipedrive"
       - "Zoho CRM"
@@ -45,6 +46,7 @@ search_group_filters:
       - "Sales Automation"
       - "Vertriebsautomatisierung"
       - "Marketing Automation"
+      - "ActiveCampaign"
       - "Lead-Management"
       # Make.com / Integromat und vergleichbare Integrationsplattformen
       - "Make.com"
@@ -60,6 +62,7 @@ search_group_filters:
       - "API-Anbindung*"
       - "API-Schnittstelle*"
       - "Schnittstellenintegration"
+      - "SaaS-Integration*"
       - "Systemintegration"
       # Workflow- und Prozessautomatisierung
       - "Workflow-Automatisierung"
@@ -70,6 +73,8 @@ search_group_filters:
       - "Business Process Automation"
       - "Process Automation"
       - "Prozessdigitalisierung"
+      - "digitale Geschäftsprozesse"
+      - "IT-Prozessberatung"
       - "RPA"
       - "UiPath"
       # KI-Prozessintegration
@@ -94,7 +99,12 @@ search_group_filters:
       - "Microsoft Fabric"
       - "Business Intelligence"
       - "BI-Reporting"
+      - "Management Reporting"
+      - "KPI-Dashboard*"
+      - "KPI-Reporting"
       - "SharePoint"
+      - "Microsoft 365"
+      - "M365"
 
   # ───────────────────────────────────────────────────────────────────────────
   # Gruppe B: IT-Infrastruktur, Netzwerke, Sophos, Firewall, VLAN,
@@ -131,6 +141,8 @@ search_group_filters:
       - "VLAN*"
       - "SD-WAN"
       - "LAN/WAN"
+      - "WAN"
+      - "Standortvernetzung"
       - "VPN"
       # Firewall / Sophos
       - "Sophos"
@@ -153,6 +165,10 @@ search_group_filters:
       - "IT-Transformation"
       - "IT-Modernisierung"
       - "Infrastrukturmodernisierung"
+      - "Infrastrukturmigration*"
+      - "Interim IT*"
+      - "Security Governance"
+      - "Virtualisierung"
       # Security Assessments / IT-Sicherheit
       - "Security Assessment*"
       - "Security Audit*"

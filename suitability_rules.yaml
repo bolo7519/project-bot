@@ -1,0 +1,224 @@
+# suitability_rules.yaml
+#
+# Eignungsbewertung (kostenlos, lokal, kein LLM) für fachlich erfasste Projekte.
+#
+# Abgrenzung:
+#   - search_group_filters.yaml entscheidet, OB ein Projekt fachlich zu einer
+#     Suchgruppe gehört (Erfassung).
+#   - Diese Datei bewertet, WIE GUT ein erfasstes Projekt passt (Eignung).
+#     Sie ändert nichts an der Erfassung und an den vier Kompetenzprofilen.
+#
+# Ein einzelner unerwünschter Begriff führt nie zum Ausschluss. Abgelehnt wird
+# nur bei `unsupported_must_haves`, wenn der Begriff im TITEL steht UND im
+# Muss-/Anforderungsabschnitt der Ausschreibung verlangt wird. Steht er nur im
+# Muss-Abschnitt, gibt es einen Abzug; eine bloße Erwähnung bleibt folgenlos.
+#
+# Schreibweise der Begriffe wie in search_group_filters.yaml (ganze Wörter,
+# Leerzeichen/Bindestrich austauschbar, "*" für Wortfortsetzungen).
+#
+# Hier stehen nur vom Nutzer genannte Schwerpunkte und Einschränkungen —
+# keine Zertifikate, Referenzen oder Fähigkeiten, die nicht belegt sind.
+
+suitability:
+
+  # Punkte je unterschiedlichem Treffer und Obergrenze je Kategorie
+  weights:
+    high: 15
+    medium: 8
+    transferable: 4
+    low_priority: -15
+  caps:
+    high: 45
+    medium: 24
+    transferable: 8
+    low_priority: -45
+
+  # Einstufung des Gesamtwerts (0–100)
+  thresholds:
+    high: 50      # ab hier "hoch"
+    medium: 25    # ab hier "mittel", darunter "niedrig"
+
+  # Höchstwert bei Ablehnung wegen einer nicht belegten Muss-Anforderung
+  reject_score_cap: 10
+  # Abzug, wenn die Muss-Anforderung nur im Anforderungsabschnitt steht
+  must_have_penalty: -25
+
+  groups:
+
+    # ─────────────────────────────────────────────────────────────────────────
+    automation_bi:
+      high:
+        # Power BI, Management Reporting, KPI-Dashboards
+        - "Power BI"
+        - "Management Reporting"
+        - "KPI-Dashboard*"
+        - "KPI-Reporting"
+        # CRM-Beratung und CRM-Integration, insbesondere Bitrix24 und Salesforce
+        - "CRM"
+        - "Bitrix24"
+        - "Salesforce"
+        # Make.com und Zapier, Workflow- und Geschäftsprozessautomatisierung
+        - "Make.com"
+        - "Integromat"
+        - "Zapier"
+        - "Workflow-Automatisierung"
+        - "Workflow Automation"
+        - "Prozessautomatisierung"
+        - "Geschäftsprozessautomatisierung"
+        - "Business Process Automation"
+        # SharePoint und Microsoft 365
+        - "SharePoint"
+        - "Microsoft 365"
+        - "M365"
+        # SaaS-Integration und digitale Geschäftsprozesse
+        - "SaaS-Integration*"
+        - "API-Integration*"
+        - "digitale Geschäftsprozesse"
+        - "Prozessdigitalisierung"
+      medium:
+        # ActiveCampaign und Marketing Automation
+        - "ActiveCampaign"
+        - "Marketing Automation"
+        # IT-Prozessberatung und technische Projektleitung
+        - "IT-Prozessberatung"
+        - "Prozessberatung"
+        - "Technische Projektleitung"
+        - "Projektleit*"
+        # Integrationssignale (fertige App-Integrationen, Schnittstellen)
+        - "REST-API"
+        - "Webhook*"
+        - "API-Anbindung*"
+      # Übertragbare Kompetenz ohne eigene Praxis: geringe Punktzahl + Hinweis
+      transferable:
+        - "n8n"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    infra_security:
+      high:
+        # IT-Infrastrukturmodernisierung
+        - "IT-Infrastruktur*"
+        - "IT Infrastructure"
+        - "Infrastrukturmodernisierung*"
+        - "IT-Modernisierung"
+        # Sophos, Firewalls, VPN, WAN, Routing, Switching, Netzwerksegmentierung
+        - "Sophos"
+        - "Firewall*"
+        - "VPN"
+        - "WAN"
+        - "Routing"
+        - "Switching"
+        - "Netzwerksegmentierung"
+        - "Segmentierungskonzept*"
+        - "Netzwerkarchitektur*"
+        # Standortvernetzung und Infrastrukturmigration
+        - "Standortvernetzung"
+        - "Infrastrukturmigration*"
+        # Senior Infrastructure Consulting
+        - "Senior Infrastructure"
+        - "Infrastructure Consult*"
+        - "IT-Transformation*"
+        # Interim IT Management und technische Projektleitung
+        - "Interim IT*"
+        - "Technische Projektleitung"
+        - "Projektleit*"
+      medium:
+        # Microsoft 365, Active Directory, Virtualisierung
+        - "Microsoft 365"
+        - "M365"
+        - "Active Directory"
+        - "Virtualisierung"
+        - "VMware"
+        - "Hyper-V"
+        # Infrastructure Security und Security Governance
+        - "Infrastructure Security"
+        - "Security Governance"
+        - "IT-Sicherheit*"
+        - "Informationssicherheit*"
+        - "Sicherheitsarchitektur*"
+        - "Sicherheitskonzept*"
+      low_priority:
+        # Helpdesk, First-Level-Support, reine Client-Rollouts
+        - "Helpdesk"
+        - "First-Level*"
+        - "1st Level*"
+        - "Supporter"
+        - "Onsite-Support*"
+        - "Vor-Ort-Support"
+        - "Client-Rollout*"
+        - "Hard- und Software Support"
+        # SOC, Penetration Testing, Red Team, hochspezialisierte Cybersecurity
+        - "SOC"
+        - "SOC-Analyst*"
+        - "Penetrationstest*"
+        - "Penetration Test*"
+        - "Pentest*"
+        - "Red Team*"
+        - "Schwachstellenmanagement"
+        - "Vulnerability Management"
+        - "Attack Surface*"
+        - "Threat Hunting"
+        - "Incident Response"
+
+  # Gilt für beide Gruppen ───────────────────────────────────────────────────
+  common:
+    # Senior-Level, Beratung, Umsetzung, technische Projektleitung (einmalig)
+    role:
+      points: 10
+      terms:
+        - "Senior"
+        - "Berater*"
+        - "Beratung"
+        - "Consultant*"
+        - "Consulting"
+        - "Projektleit*"
+        - "Interim"
+
+    # Remote bevorzugt
+    work_mode:
+      remote_points: 10
+      hybrid_points: 5
+      onsite_points: -20
+      onsite_only:
+        - "kein Remote"
+        - "Full-Onsite"
+        - "100% vor Ort"
+        - "100 % vor Ort"
+        - "ausschließlich vor Ort"
+        - "vollständig vor Ort"
+      hybrid:
+        - "hybrid"
+        - "anteilig vor Ort"
+        - "teilweise vor Ort"
+        - "teilweise remote"
+      remote:
+        - "Remote"
+        - "Homeoffice"
+        - "Home Office"
+
+    # 20–40 Stunden pro Woche bevorzugt: Teilzeit-Angaben leicht positiv,
+    # Vollzeit (40 h) neutral
+    workload:
+      points: 5
+      terms:
+        - "Teilzeit"
+        - "20 Stunden"
+        - "24 Stunden"
+        - "30 Stunden"
+        - "2-3 Tage"
+        - "3 Tage pro Woche"
+        - "50 %"
+        - "60 %"
+
+    # Nicht belegte Spezialisierungen. Ablehnung nur, wenn Begriff im Titel UND
+    # im Muss-Abschnitt; nur im Muss-Abschnitt → Abzug; Erwähnung → nichts.
+    unsupported_must_haves:
+      - label: "Pega-Entwicklung"
+        terms:
+          - "Pega"
+      - label: "SAP-Entwicklung/-Scripting"
+        terms:
+          - "Winshuttle"
+          - "ABAP"
+          - "SAP FI"
+          - "SAP-Entwickl*"
+          - "SAP Scripting"
