@@ -118,7 +118,10 @@ class SharedFeedRun:
         for group_id, group_cfg in groups.items():
             filter_cfg = filter_config_from_search_group(group_cfg)
             self.engines[group_id] = FilterEngine(filter_cfg)
-            self.include_terms[group_id] = list(filter_cfg.include_terms)
+            # Für den RSS-Vorfilter zählt jeder Fachbegriff, auch ein schwacher:
+            # Im Zweifel wird die Projektseite geladen und dort entschieden.
+            self.include_terms[group_id] = (
+                list(filter_cfg.include_terms) + list(filter_cfg.weak_include_terms))
             self.terms[group_id] = _terms_hash(group_cfg, self.title_exclude_terms)
 
         self.pre_scorer = None

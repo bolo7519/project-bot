@@ -728,3 +728,91 @@ class TestKnownUrlsAreNeverFetched:
         summary = harness.run()
         assert "firewall-sophos" not in harness.page_calls
         assert summary["total_errors"] == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10 — Schwache Fachbegriffe im gemeinsamen Abruf
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestWeakTermsInPipeline:
+
+    @staticmethod
+    def _add(harness, slug, title, summary, full):
+        harness.feeds["de"].append(
+            {"link": f"{BASE}{slug}?ref=rss", "title": title, "summary": summary, "id": slug})
+        ALL[slug] = (title, summary, full)
+
+    def test_incidental_weak_term_creates_no_project_file(self, harness):
+        self._add(harness, "data-engineer", "Data Engineer Snowflake (m/w/d)", "Datenpipelines ...",
+                  "Datenpipelines mit Snowflake. Kenntnisse in Microsoft Entra ID.")
+        try:
+            harness.run()
+        finally:
+            ALL.pop("data-engineer")
+        assert "data-engineer" in harness.page_calls          # Seite wurde einmal geprüft
+        assert "data-engineer" not in harness.files()
+        record = harness.ledger()[f"{BASE}data-engineer"]
+        assert record["status"] == "filtered"
+        log = [json.loads(line) for line in
+               (harness.out / "filter_rejected.jsonl").read_text("utf-8").splitlines()]
+        reasons = [c["reason"] for e in log if e["provider_url"].endswith("data-engineer?ref=rss")
+                   and e["search_group_id"] == B for c in e["filter_result"]["checks"]]
+        assert reasons and "Nur beiläufig erwähnt" in reasons[0] and "Entra ID" in reasons[0]
+
+    def test_weak_term_with_context_or_in_title_is_captured(self, harness):
+        self._add(harness, "infra-berater", "Senior Berater IT-Infrastruktur (m/w/d)", "",
+                  "Modernisierung der Serverlandschaft an drei Standorten.")
+        self._add(harness, "m365-entra", "Consultant Identity (m/w/d)", "",
+                  "Migration nach Microsoft 365 und Entra ID.")
+        try:
+            harness.run()
+        finally:
+            ALL.pop("infra-berater")
+            ALL.pop("m365-entra")
+        files = harness.files()
+        assert files["infra-berater"]["search_groups"] == [B]
+        assert files["m365-entra"]["search_groups"] == [B]
+
+    def test_weak_term_in_rss_text_prevents_the_title_prefilter(self, harness):
+        """Im Zweifel wird die Seite geladen: Der Vorfilter kennt auch schwache Begriffe."""
+        self._add(harness, "recruiter-m365", "Recruiter (m/w/d) Microsoft 365 Umfeld", "",
+                  "Besetzung von Stellen im Microsoft 365 Umfeld.")
+        try:
+            harness.run()
+        finally:
+            ALL.pop("recruiter-m365")
+        assert "recruiter-m365" in harness.page_calls
+
+    def test_second_run_does_not_fetch_filtered_weak_matches_again(self, harness):
+        self._add(harness, "data-engineer", "Data Engineer Snowflake (m/w/d)", "",
+                  "Datenpipelines mit Snowflake. Kenntnisse in Microsoft Entra ID.")
+        try:
+            harness.run()
+            harness.page_calls.clear()
+            summary = harness.run()
+        finally:
+            ALL.pop("data-engineer")
+        assert harness.page_calls == [] and summary["page_requests"] == 0
+
+    def test_changed_weak_terms_trigger_reevaluation(self, harness):
+        from search_group_config import load_default_topic_filters
+
+        self._add(harness, "data-engineer", "Data Engineer Snowflake (m/w/d)", "",
+                  "Datenpipelines mit Snowflake. Kenntnisse in Microsoft Entra ID.")
+        try:
+            harness.run()
+            defaults = load_default_topic_filters()[B]
+            harness.config["search_groups"][B].setdefault("filters", {}).update({
+                "include_terms": list(defaults["include_terms"]) + ["Entra ID"],
+                "weak_include_terms": [
+                    t for t in defaults["weak_include_terms"] if t != "Entra ID"],
+            })
+            harness.page_calls.clear()
+            harness.run()
+        finally:
+            ALL.pop("data-engineer")
+        # Geänderte Regeln der Gruppe B: zuvor abgelehnte Einträge im Feed werden
+        # einmalig neu geprüft — bereits erfasste Projekte nicht.
+        assert "data-engineer" in harness.page_calls
+        assert not set(harness.page_calls) & {"firewall-sophos", "power-bi-berater"}
+        assert harness.files()["data-engineer"]["search_groups"] == [B]

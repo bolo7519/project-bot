@@ -6,7 +6,8 @@ erfasstes Projekt gegen suitability_rules.yaml und liefert drei getrennte
 Ergebnisse:
 
 1. Fachliche Eignung   — Wert 0–100 und Einstufung (hoch/mittel/niedrig/abgelehnt)
-2. Rahmenbedingungen   — Arbeitsort, Auslastung, Starttermin; je Angabe ein
+2. Rahmenbedingungen   — Vertragsart, Arbeitsort, Auslastung, Starttermin,
+                         Laufzeit (nur Anzeige); je Angabe ein
                          Status (erfüllt / teilweise / nicht erfüllt /
                          unbekannt / nicht geprüft / Konflikt)
 3. Gesamtempfehlung    — Bewerben / Prüfen / Nicht bewerben
@@ -23,6 +24,16 @@ Grundsätze:
   verlangt wird.
 - Viele passende Schlagworte überdecken keine zwingend geforderte
   Spezialerfahrung: reine Spezialistenrollen werden fachlich gedeckelt.
+- Reine Softwareentwicklerrollen mit zwingenden, nicht belegten Technologien
+  bleiben unter der Schwelle "mittel". Power BI, CRM-Integration und
+  Prozessautomatisierung sind davon nicht pauschal betroffen.
+- Die Fundstelle zählt: Kernthema im Titel gibt einen Zuschlag, Begriffe nur
+  unter Nice-to-have zählen schwach, eine einzelne beiläufige Erwähnung ergibt
+  keine mittlere Eignung, der Senior-Bonus setzt einen fachlichen Treffer voraus.
+- Verlangte, aber nicht bestätigte Kenntnisse verhindern die Einstufung "hoch"
+  und werden als ``missing_requirements`` ausgewiesen.
+- Festanstellung und Anbieterwerbung sind keine Freelance-Projekte und werden
+  nicht empfohlen.
 - Fehlende Angaben zu den Rahmenbedingungen sind "unbekannt", nie "erfüllt".
 - Ohne konfigurierte Verfügbarkeit wird der Starttermin nur angezeigt.
 """
@@ -64,32 +75,118 @@ RECOMMEND_APPLY = "Bewerben"
 RECOMMEND_REVIEW = "Prüfen"
 RECOMMEND_SKIP = "Nicht bewerben"
 
-# Überschriften, die einen Muss-/Anforderungsabschnitt einleiten bzw. beenden.
-# Nur als Überschrift (Zeilenanfang oder fett, gefolgt von ":" / "**" /
-# Zeilenende), damit "Anforderungsworkshops" im Fließtext nicht zählt.
-_MUST_START_RE = re.compile(
-    r"(?:^|\n|\*\*)[ \t]*(?:ihr |dein |deine )?"
-    r"(must[ \t-]*haves?|muss[ \t-]*(?:kriterien|anforderungen)|zwingend erforderlich|"
-    r"voraussetzungen|anforderungen|profil|talente|requirements|qualifikation(?:en)?)"
-    r"[ \t]*(?::|\*\*|\n|$)",
+# ── Abschnitte einer Ausschreibung ───────────────────────────────────────────
+# Erkannt werden Überschriftenzeilen ("Ihr Profil:", "**Ihre Kenntnisse:**",
+# "Must-Have-Skills:", "Anforderungen (Muss)"), nie Wörter im Fließtext —
+# "Anforderungsworkshops durchführen" ist keine Überschrift.
+_MUST_WORDS = (
+    r"must[ \t-]*haves?|muss[ \t-]*(?:kriterien|anforderungen)|zwingend erforderlich|"
+    r"voraussetzungen|anforderungsprofil|anforderungen|profil|talente|requirements|"
+    r"qualifikation(?:en)?|qualifications|kenntnisse|skillset|skills|know[ -]?how|"
+    r"das bring(?:st du|en sie) mit|was (?:sie mitbringen|du mitbringst)|"
+    r"your profile|your skills"
+)
+_HEADING_PREFIX = (
+    r"(?:(?:ihr|ihre|dein|deine|unsere|unser|fachliche|technische|zwingende|"
+    r"erforderliche|your|required)\s+)*"
+)
+# Überschrift am Zeilenanfang, optional mit Inhalt hinter dem Doppelpunkt
+_MUST_HEAD_RE = re.compile(
+    rf"^{_HEADING_PREFIX}(?:{_MUST_WORDS})\b\s*(?:\([^)]*\)?)?[\s-]*(?:skills?)?\s*(?::(.*)|$)",
     re.IGNORECASE,
 )
-_MUST_END_RE = re.compile(
-    r"(nice[ \t-]*to[ \t-]*have|soll[ \t-]*kriterien|kann[ \t-]*kriterien|wünschenswert|"
-    r"von vorteil|rahmenparameter|rahmendaten|wir bieten|konditionen)",
+# Einleitungszeile, die mit Doppelpunkt endet ("… mit folgendem Skillset:")
+_MUST_ANY_RE = re.compile(rf"\b(?:{_MUST_WORDS})\b", re.IGNORECASE)
+_NICE_WORDS = (
+    r"nice[ \t-]*to[ \t-]*haves?|soll[ \t-]*kriterien|kann[ \t-]*kriterien|wünschenswert|"
+    r"von vorteil|von nutzen|(?:ist |wäre )?ein plus\b|pluspunkt"
+)
+# Als Überschrift zusätzlich "Optional" / "Idealerweise"; im Fließtext nicht,
+# denn "Erfahrung in X, idealerweise mit Y" bleibt eine feste Anforderung an X.
+_NICE_HEAD_RE = re.compile(rf"(?:{_NICE_WORDS}|optional|idealerweise)", re.IGNORECASE)
+_NICE_RE = re.compile(_NICE_WORDS, re.IGNORECASE)
+# Zeilen, die einen Anforderungsabschnitt beenden
+_SECTION_END_RE = re.compile(
+    r"^(?:rahmenparameter|rahmendaten|rahmenbedingungen|eckdaten|quick facts|wir bieten|"
+    r"konditionen|das zeichnet (?:sie|dich) aus|ihre aufgaben|deine aufgaben|aufgaben|"
+    r"kontakt|bei interesse|ort|einsatzort|arbeitsort|standort|start|projektstart|"
+    r"projektdauer|dauer|laufzeit|arbeitsmodell|sektor|branche|sprache)\b",
     re.IGNORECASE,
 )
+_LINE_DECOR_RE = re.compile(r"^[\s\-\*•·#>]+|[\s\*]+$")
 _MUST_SECTION_MAX_CHARS = 2500
+_NICE_SECTION_MAX_CHARS = 1200
+
+
+@dataclass
+class Sections:
+    """Text einer Ausschreibung, nach Verbindlichkeit getrennt."""
+    must: str = ""          # Muss-/Anforderungsabschnitte
+    nice: str = ""          # Nice-to-have: Abschnitte und einzelne Zeilen
+    main: str = ""          # alles außer Nice-to-have
+
+
+def _split_sections(text: str) -> Sections:
+    """
+    Teilt den Ausschreibungstext in Muss-, Nice-to-have- und Haupttext.
+
+    Nice-to-have sind Abschnitte unter einer entsprechenden Überschrift sowie
+    einzelne Zeilen mit einem Hinweis wie "von Vorteil" oder "wünschenswert".
+    """
+    must: List[str] = []
+    nice: List[str] = []
+    main: List[str] = []
+    state: Optional[str] = None
+    budget = 0
+    # Aufzählungen und fette Überschriften, die mitten in einer Zeile stehen
+    # ("**Anforderungen** • Punkt 1 • Punkt 2"), auf eigene Zeilen bringen.
+    text = re.sub(r"[ \t]*•[ \t]*", "\n• ", text)
+    text = re.sub(r"\*\*([^*\n]{2,70})\*\*", r"\n**\1**\n", text)
+    for raw in text.splitlines():
+        clean = _LINE_DECOR_RE.sub("", raw).replace("**", "").strip()
+        if not clean or not re.search(r"\w", clean):
+            main.append(raw)            # Leerzeile oder nur Satzzeichen
+            continue
+        is_short = len(clean) <= 80
+        nice_heading = is_short and len(clean) <= 60 and bool(_NICE_HEAD_RE.match(clean)) and (
+            clean.endswith(":") or len(clean) <= 30)
+        head = _MUST_HEAD_RE.match(clean) if is_short else None
+        intro = (
+            head is None and is_short and clean.endswith(":")
+            and _MUST_ANY_RE.search(clean) is not None
+        )
+        if nice_heading:
+            state, budget = "nice", _NICE_SECTION_MAX_CHARS
+            continue
+        if head is not None or intro:
+            state, budget = "must", _MUST_SECTION_MAX_CHARS
+            main.append(raw)
+            rest = (head.group(1) or "").strip() if head is not None else ""
+            if rest:
+                must.append(rest)
+            continue
+        if state and (
+            _SECTION_END_RE.match(clean)
+            or (clean.endswith(":") and len(clean) <= 45)
+        ):
+            state = None
+        if state:
+            budget -= len(raw) + 1
+            if budget < 0:
+                state = None
+
+        if state == "nice" or _NICE_RE.search(clean):
+            nice.append(raw)            # zählt nur abgeschwächt
+            continue
+        main.append(raw)
+        if state == "must":
+            must.append(raw)
+    return Sections(must="\n".join(must), nice="\n".join(nice), main="\n".join(main))
 
 
 def _must_sections(text: str) -> str:
     """Gibt den Text aller Muss-/Anforderungsabschnitte zurück (kann leer sein)."""
-    chunks: List[str] = []
-    for start in _MUST_START_RE.finditer(text):
-        rest = text[start.end():start.end() + _MUST_SECTION_MAX_CHARS]
-        end = _MUST_END_RE.search(rest)
-        chunks.append(rest[:end.start()] if end else rest)
-    return "\n".join(chunks)
+    return _split_sections(text).must
 
 
 def _matches(terms: List[Any], text: str) -> List[str]:
@@ -127,12 +224,49 @@ _PER_WEEK = r"(?:pro|/|je|die|per)\s*Woche"
 _HOURS_RANGE_RE = re.compile(
     rf"(\d{{1,2}})\s*(?:-|–|bis)\s*(\d{{1,2}})\s*{_HOURS}\s*{_PER_WEEK}", re.IGNORECASE)
 _HOURS_RE = re.compile(rf"(\d{{1,2}})\s*{_HOURS}\s*{_PER_WEEK}", re.IGNORECASE)
+# Tage pro Woche als Auslastung — nicht, wenn die Angabe den Arbeitsort meint
+# ("2-4 Tage/Woche on-site", "4 Tage pro Woche vor Ort").
+_PLACE_WORDS = r"(?:on-?site|vor[ -]Ort|remote|im Büro|Präsenz|Home[ -]?office)"
 _DAYS_RE = re.compile(
-    rf"(\d)(?:\s*(?:-|–|bis)\s*(\d))?\s*Tage\s*{_PER_WEEK}", re.IGNORECASE)
-_PERCENT_RE = re.compile(r"Auslastung\W{0,8}(\d{2,3})\s*%", re.IGNORECASE)
+    rf"(\d)(?:\s*(?:-|–|bis)\s*(\d))?\s*Tage\s*{_PER_WEEK}(?![^\n]{{0,15}}{_PLACE_WORDS})",
+    re.IGNORECASE)
+# "Auslastung: 100 %", "Pensum: 80%", "Workload: 100 %", "ab 80% bis zu 100%"
+_PERCENT_RE = re.compile(
+    r"(?:Auslastung|Arbeitspensum|Pensum|Workload|Arbeitsumfang|Kapazität)\W{0,12}"
+    r"(?:ab\s*|ca\.?\s*|min\.?\s*|mind\.?\s*)?(\d{2,3})\s*%?\s*"
+    r"(?:(?:-|–|bis(?:\s*zu)?)\s*(\d{2,3})\s*)?%",
+    re.IGNORECASE)
+# Prozentangabe im Titel ("[100%]", "(80-100%)") — nicht "100% remote"
+_TITLE_PERCENT_RE = re.compile(
+    r"(\d{2,3})\s*(?:(?:-|–)\s*(\d{2,3})\s*)?%(?!\s*(?:rem|vor|on|home))", re.IGNORECASE)
 _FULL_TIME_RE = re.compile(r"\b(Vollzeit|full[ -]?time)\b", re.IGNORECASE)
 _PART_TIME_RE = re.compile(r"\b(Teilzeit|part[ -]?time)\b", re.IGNORECASE)
 _REMOTE_PERCENT_RE = re.compile(r"(\d{1,3})\s*%\s*Remote", re.IGNORECASE)
+_ONSITE_PERCENT_RE = re.compile(
+    r"(\d{1,3})\s*%\s*(?:vor[ -]Ort|on-?site|Präsenz|im Büro)", re.IGNORECASE)
+_FULL_REMOTE_RE = re.compile(
+    r"\b(?:full(?:y)?[ -]?remote|remote[ -]only|vollständig remote|komplett remote|"
+    r"rein remote|ausschließlich remote)\b", re.IGNORECASE)
+# Bloße Feldbezeichnung, keine Aussage über den Arbeitsort
+_PLACE_LABEL_RE = re.compile(
+    r"(?:remote\s*/\s*on-?site|on-?site\s*/\s*remote|remote\s*/\s*vor[ -]Ort|"
+    r"vor[ -]Ort\s*/\s*remote)\s*:", re.IGNORECASE)
+_ONSITE_NEGATED_RE = re.compile(
+    r"\b(?:kein(?:e|en|er)?|ohne|nicht)\s+(?:\w+\s+)?(?:vor[ -]Ort\w*|on-?site\w*|"
+    r"Präsenz\w*|Anwesenheit\w*|Reisetätigkeit)", re.IGNORECASE)
+_ONSITE_HINT_RE = re.compile(
+    r"(?<![\w])(vor[ -]Ort|on-?site|Präsenz\w*|im Büro|Büropräsenz|Anwesenheit\w*)", re.IGNORECASE)
+_PLACE_LINE_RE = re.compile(
+    r"(?:Arbeitsort|Einsatzort|Standort|Projektstandort|Ort|Location)\**\s*:?\**\s*([^\n]{0,90})",
+    re.IGNORECASE)
+_PLACE_MIX_RE = re.compile(
+    r"\w{3,}\)?\s*(?:und|oder|sowie|\+|/|,)\s*remote|"
+    r"remote\s*(?:und|oder|sowie|\+)\s*\w", re.IGNORECASE)
+
+# Vertragsart
+_NOT_EMPLOYMENT_RE = re.compile(
+    r"\bkein(?:e|en|er)?\s+(?:Festanstellung|Arbeitnehmerüberlassung|ANÜ|Personalverleih)",
+    re.IGNORECASE)
 
 _MONTHS = {
     "januar": 1, "january": 1, "februar": 2, "february": 2, "märz": 3, "maerz": 3,
@@ -145,12 +279,30 @@ _START_LABEL_RE = re.compile(
     r"\**\s*:?\**\s*([^\n]{0,80})",
     re.IGNORECASE,
 )
+# Hier endet die Startangabe: Was danach steht, gehört zu Ende, Dauer oder
+# einem anderen Feld derselben Zeile ("Start: 1.11.2026 Ende: 30.9.2027").
+_START_SEGMENT_END_RE = re.compile(
+    r"\b(?:Ende|Enddatum|Projektende|End date|Dauer|Projektdauer|Pensum|Auslastung|"
+    r"Arbeitsort|Einsatzort)\b", re.IGNORECASE)
+_NO_LETTER_BEFORE = r"(?<![A-Za-zÄÖÜäöüß])"
+_END_LABEL_RE = re.compile(
+    _NO_LETTER_BEFORE + r"(?:Projektende|Enddatum|Ende|End date)\**\s*:\**\s*([^\n]{0,40})",
+    re.IGNORECASE)
+_PERIOD_LABEL_RE = re.compile(
+    _NO_LETTER_BEFORE + r"(Projektzeitraum|Einsatzzeitraum|Zeitraum|Projektlaufzeit|Vertragslaufzeit|Laufzeit|"
+    r"Projektdauer|Einsatzdauer|Dauer)"
+    r"\**\s*:?\**\s*([^\n]{0,80})", re.IGNORECASE)
+_DURATION_RE = re.compile(
+    r"(?:ca\.?\s*)?\d{1,2}(?:\s*(?:-|–|bis)\s*\d{1,2})?\s*\+?\s*"
+    r"(?:Monate?n?|MM|Wochen|Jahre?|PT|Personentage)\b\+*", re.IGNORECASE)
 _DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")
 _MONTH_RE = re.compile(
-    r"(?:(Anfang|Mitte|Ende)\s+)?(" + "|".join(_MONTHS) + r")(?:\s+(\d{4}))?",
+    r"(?:(Anfang|Mitte|Ende)\s+|(\d{1,2})\.\s*)?(" + "|".join(_MONTHS) + r")(?:\s+(\d{4}))?",
     re.IGNORECASE,
 )
-_IMMEDIATE_RE = re.compile(r"\b(asap|ab sofort|sofort|schnellstmöglich|kurzfristig)\b", re.IGNORECASE)
+_IMMEDIATE_RE = re.compile(
+    r"\b(asap|ab sofort|per sofort|sofort|schnellstmöglich\w*|nächstmöglich\w*|kurzfristig)\b",
+    re.IGNORECASE)
 
 
 def _parse_iso_date(value: Any) -> Optional[date]:
@@ -175,9 +327,15 @@ def _dates_in_segment(segment: str, today: date) -> List[date]:
             found.append(date(int(year), int(month), int(day)))
         except ValueError:
             continue
-    for part, month_name, year in _MONTH_RE.findall(segment):
+    for part, day_text, month_name, year in _MONTH_RE.findall(segment):
         month = _MONTHS[month_name.lower()]
         day = {"mitte": 15, "ende": 28}.get(part.lower(), 1)
+        if day_text:
+            try:
+                date(int(year) if year else today.year, month, int(day_text))
+                day = int(day_text)
+            except ValueError:
+                pass
         if year:
             found.append(date(int(year), month, day))
         else:
@@ -198,13 +356,16 @@ def _parse_start(text: str, today: date) -> Tuple[Optional[date], Optional[str]]
         "sofort"/"asap" ohne Datum wird als heute gewertet.
     """
     for label, segment in _START_LABEL_RE.findall(text):
+        is_period = label.lower() in ("zeitraum", "projektzeitraum", "laufzeit")
+        if not is_period:
+            segment = _START_SEGMENT_END_RE.split(segment, maxsplit=1)[0]
         dates = _dates_in_segment(segment, today)
         immediate = bool(_IMMEDIATE_RE.search(segment))
         if not dates and not immediate:
             continue
         if not dates:
             return today, "sofort"
-        if label.lower() in ("zeitraum", "projektzeitraum", "laufzeit"):
+        if is_period:
             start = dates[0]          # "von – bis": das erste Datum ist der Start
             return start, start.strftime("%d.%m.%Y")
         start = max(dates)            # Startfenster: der späteste genannte Termin
@@ -212,6 +373,40 @@ def _parse_start(text: str, today: date) -> Tuple[Optional[date], Optional[str]]
             "spätestens " if len(dates) > 1 else "")
         return start, prefix + start.strftime("%d.%m.%Y")
     return None, None
+
+
+def _parse_end(text: str, today: date) -> Optional[str]:
+    """
+    Liest Projektende bzw. Laufzeit — getrennt vom Starttermin.
+
+    Returns:
+        Anzeige wie "bis 30.09.2027" oder "5-6 Monate"; None ohne Angabe.
+    """
+    for segment in _END_LABEL_RE.findall(text):
+        dates = _dates_in_segment(segment, today)
+        if dates:
+            return "bis " + dates[0].strftime("%d.%m.%Y")
+    for label, segment in _PERIOD_LABEL_RE.findall(text):
+        dates = _dates_in_segment(segment, today)
+        if len(dates) >= 2:
+            return "bis " + max(dates).strftime("%d.%m.%Y")
+        if dates and re.search(r"\bbis\b", segment, re.IGNORECASE):
+            return "bis " + dates[-1].strftime("%d.%m.%Y")
+        duration = _DURATION_RE.search(segment)
+        if duration:
+            return duration.group(0).strip()
+    return None
+
+
+@dataclass
+class GroupScore:
+    """Zwischenergebnis der Bewertung einer Suchgruppe."""
+    positive: int = 0
+    negative: int = 0
+    reasons: List[str] = field(default_factory=list)
+    full_hits: int = 0                                   # Treffer mit vollem Gewicht
+    title_hits: Dict[str, List[str]] = field(default_factory=dict)   # high/medium im Titel
+    low_title_hits: List[str] = field(default_factory=list)          # low_priority im Titel
 
 
 @dataclass
@@ -238,6 +433,8 @@ class SuitabilityResult:
     best_group: Optional[str] = None
     group_scores: Dict[str, int] = field(default_factory=dict)
     reasons: List[str] = field(default_factory=list)              # fachliche Gründe
+    # Zwingend verlangte, nicht belegte bzw. nicht bestätigte Kompetenzen
+    missing_requirements: List[str] = field(default_factory=list)
     conditions: Dict[str, ConditionCheck] = field(default_factory=dict)
     recommendation_reasons: List[str] = field(default_factory=list)
     reject_reason: Optional[str] = None
@@ -260,6 +457,7 @@ class SuitabilityResult:
                 "best_group": self.best_group,
                 "group_scores": dict(self.group_scores),
                 "reasons": list(self.reasons),
+                "missing_requirements": list(self.missing_requirements),
             },
             "conditions": {k: v.to_dict() for k, v in self.conditions.items()},
         }
@@ -321,12 +519,15 @@ class SuitabilityScorer:
             return points
         return max(points, int(cap)) if int(cap) < 0 else min(points, int(cap))
 
-    def _score_group(self, group_id: str, text: str) -> Tuple[int, int, List[str]]:
-        """Gibt (Pluspunkte, Abzüge, Gründe) für eine Gruppe zurück."""
+    def _score_group(self, group_id: str, sections: Sections, title: str) -> "GroupScore":
+        """
+        Bewertet eine Gruppe. Treffer zählen nach Fundstelle:
+        - im Haupttext (Titel, Aufgaben, Anforderungen): volle Punkte
+        - nur unter Nice-to-have: stark abgeschwächt (``nice_to_have_factor``)
+        """
         cfg = self._groups.get(group_id) or {}
-        positive = 0
-        negative = 0
-        reasons: List[str] = []
+        factor = float(self._rules.get("nice_to_have_factor", 0.25))
+        result = GroupScore()
         labels = {
             "high": "Hohe Priorität",
             "medium": "Mittlere Priorität",
@@ -334,39 +535,76 @@ class SuitabilityScorer:
             "low_priority": "Niedrige Priorität",
         }
         for category, label in labels.items():
-            found = _matches(cfg.get(category) or [], text)
-            if not found:
+            terms = cfg.get(category) or []
+            found = _matches(terms, sections.main)
+            if found:
+                points = self._capped(category, len(found))
+                if points >= 0:
+                    result.positive += points
+                    result.full_hits += len(found)
+                else:
+                    result.negative += points
+                result.reasons.append(
+                    f"{label} [{group_id}]: {', '.join(found)} ({points:+d})")
+            if category == "low_priority":
+                result.low_title_hits = _matches(terms, title)
                 continue
-            points = self._capped(category, len(found))
-            if points >= 0:
-                positive += points
-            else:
-                negative += points
-            reasons.append(f"{label} [{group_id}]: {', '.join(found)} ({points:+d})")
-        return positive, negative, reasons
+            in_title = _matches(found, title)
+            if in_title and category in ("high", "medium"):
+                result.title_hits.setdefault(category, in_title)
+            nice_only = [t for t in _matches(terms, sections.nice) if t not in found]
+            if nice_only:
+                weight = int(self._weights.get(category, 0))
+                points = max(1, round(weight * factor)) * len(nice_only) if weight > 0 else 0
+                if points:
+                    result.positive += points
+                    result.reasons.append(
+                        f"{label} [{group_id}], nur Nice-to-have: "
+                        f"{', '.join(nice_only)} ({points:+d})")
+        return result
 
-    def _specialist_cap(self, title: str, must_text: str) -> Tuple[Optional[int], Optional[str]]:
+    def _specialist_caps(self, title: str, must_text: str) -> List[Tuple[int, str, List[str]]]:
         """
-        Prüft, ob eine reine Spezialistenrolle vorliegt.
+        Prüft, ob reine Spezialistenrollen vorliegen.
+
+        Eine Regel greift, wenn im Anforderungsabschnitt nicht belegte
+        Spezialerfahrung verlangt wird UND
+          - der Titel die Spezialistenrolle nennt (``min_required_with_title``
+            Anforderungen, Standard 1), oder
+          - der Titel zusätzlich ein belegtes Kernthema nennt
+            (``exempt_title_terms``): dann erst ab ``min_required_with_exempt_title``
+            Anforderungen — ein "Power BI Entwickler" ist nicht pauschal eine
+            ungeeignete Entwicklerrolle, oder
+          - ohne passenden Titel mindestens ``min_required_without_title``
+            (Standard 2) solcher Anforderungen verlangt werden.
 
         Returns:
-            (Deckel, Grund) oder (None, None).
+            Liste von (Deckel, Grund, fehlende Anforderungen).
         """
+        caps: List[Tuple[int, str, List[str]]] = []
         for rule in self._common.get("specialist_roles") or []:
             required = _matches(rule.get("required_experience_terms") or [], must_text)
             if not required:
                 continue
             in_title = _matches(rule.get("title_terms") or [], title)
-            if in_title or len(required) >= 2:
-                cap = int(rule.get("score_cap", 40))
-                label = rule.get("label") or "Spezialistenrolle"
-                where = f"Titel: {', '.join(in_title)}; " if in_title else ""
-                return cap, (
-                    f"{label}: zwingend geforderte Spezialerfahrung nicht belegt "
-                    f"({where}Anforderungen: {', '.join(required[:5])}) "
-                    f"— fachliche Eignung auf {cap} begrenzt"
-                )
-        return None, None
+            exempt = _matches(rule.get("exempt_title_terms") or [], title)
+            if in_title and exempt:
+                needed = int(rule.get("min_required_with_exempt_title", 2))
+            elif in_title:
+                needed = int(rule.get("min_required_with_title", 1))
+            else:
+                needed = int(rule.get("min_required_without_title", 2))
+            if len(required) < needed:
+                continue
+            cap = int(rule.get("score_cap", 40))
+            label = rule.get("label") or "Spezialistenrolle"
+            where = f"Titel: {', '.join(in_title)}; " if in_title else ""
+            caps.append((cap, (
+                f"{label}: zwingend geforderte Spezialerfahrung nicht belegt "
+                f"({where}Anforderungen: {', '.join(required[:5])}) "
+                f"— fachliche Eignung auf {cap} begrenzt"
+            ), required))
+        return caps
 
     # ── Rahmenbedingungen ──────────────────────────────────────────────────────
 
@@ -383,13 +621,61 @@ class SuitabilityScorer:
             if share <= 0:
                 return ConditionCheck(STATUS_NOT_OK, "0 % remote")
             return ConditionCheck(STATUS_PARTIAL, f"{share} % remote")
+        percent = _ONSITE_PERCENT_RE.search(text)
+        if percent:
+            share = int(percent.group(1))
+            if share >= 100:
+                return ConditionCheck(STATUS_NOT_OK, "vollständig vor Ort", "Angabe: 100 % vor Ort")
+            if share > 0:
+                return ConditionCheck(STATUS_PARTIAL, f"hybrid ({share} % vor Ort)")
+        if _FULL_REMOTE_RE.search(text):
+            return ConditionCheck(STATUS_OK, "remote")
         if _matches(cfg.get("hybrid") or [], text):
             return ConditionCheck(STATUS_PARTIAL, "hybrid")
         if _matches(cfg.get("remote") or [], text):
+            # "Remote" allein heißt nicht vollständig remote: Nennt die
+            # Ausschreibung daneben Präsenz oder einen Einsatzort "X und remote",
+            # ist es ein hybrides Modell.
+            cleaned = _ONSITE_NEGATED_RE.sub(" ", _PLACE_LABEL_RE.sub(" ", text))
+            hint = _ONSITE_HINT_RE.search(cleaned)
+            if hint:
+                return ConditionCheck(
+                    STATUS_PARTIAL, "hybrid",
+                    f"Remote mit Vor-Ort-Anteil (Angabe: {hint.group(1)})")
+            for line in _PLACE_LINE_RE.findall(cleaned):
+                if _PLACE_MIX_RE.search(line):
+                    return ConditionCheck(
+                        STATUS_PARTIAL, "hybrid", f"Einsatzort und remote: {line.strip()[:60]}")
             return ConditionCheck(STATUS_OK, "remote")
-        return ConditionCheck(STATUS_UNKNOWN, None, "Kein Arbeitsort angegeben")
+        return ConditionCheck(STATUS_UNKNOWN, None, "Kein Remote-Anteil angegeben")
 
-    def _check_workload(self, text: str) -> ConditionCheck:
+    def _check_contract_type(self, title: str, text: str) -> ConditionCheck:
+        """Unterscheidet Freelance, Festanstellung, Personalverleih und Anbieterwerbung."""
+        cfg = self._conditions.get("contract_type") or {}
+        advert = _matches(cfg.get("advertisement_title") or [], title)
+        if advert:
+            return ConditionCheck(
+                STATUS_NOT_OK, "Anbieterwerbung",
+                f"Kein Projektauftrag: Anbieter sucht selbst Kunden/Partner ({advert[0]})")
+        cleaned = _NOT_EMPLOYMENT_RE.sub(" ", text)
+        employment = _matches(cfg.get("employment") or [], cleaned)
+        temp = _matches(cfg.get("temporary_employment") or [], cleaned)
+        freelance = _matches(cfg.get("freelance") or [], cleaned)
+        if employment and not freelance:
+            return ConditionCheck(STATUS_NOT_OK, "Festanstellung", f"Angabe: {employment[0]}")
+        if employment:
+            return ConditionCheck(
+                STATUS_PARTIAL, "Freelance oder Festanstellung",
+                f"Beides genannt ({freelance[0]}, {employment[0]})")
+        if temp:
+            return ConditionCheck(
+                STATUS_PARTIAL, "Arbeitnehmerüberlassung/Personalverleih",
+                f"Angabe: {temp[0]} — kein klassischer Freelance-Vertrag")
+        if freelance:
+            return ConditionCheck(STATUS_OK, "Freelance")
+        return ConditionCheck(STATUS_UNKNOWN, None, "Keine Vertragsart angegeben")
+
+    def _check_workload(self, text: str, title: str = "") -> ConditionCheck:
         cfg = self._conditions.get("workload") or {}
         low = float(cfg.get("preferred_hours_min", 20))
         high = float(cfg.get("preferred_hours_max", 40))
@@ -405,17 +691,19 @@ class SuitabilityScorer:
             if m:
                 hours = (float(m.group(1)), float(m.group(1)))
         if hours is None:
+            m = _PERCENT_RE.search(text) or (_TITLE_PERCENT_RE.search(title) if title else None)
+            if m and 10 <= int(m.group(1)) <= 100:
+                first = int(m.group(1))
+                second = int(m.group(2)) if m.group(2) and int(m.group(2)) <= 100 else first
+                first, second = min(first, second), max(first, second)
+                hours = (first * full_time / 100, second * full_time / 100)
+                label = f"{first} %" if first == second else f"{first}–{second} %"
+        if hours is None:
             m = _DAYS_RE.search(text)
             if m:
                 first = float(m.group(1)) * 8
                 hours = (first, float(m.group(2)) * 8 if m.group(2) else first)
                 label = m.group(0)
-        if hours is None:
-            m = _PERCENT_RE.search(text)
-            if m:
-                value = int(m.group(1)) * full_time / 100
-                hours = (value, value)
-                label = f"{m.group(1)} %"
         if hours is None and _FULL_TIME_RE.search(text):
             hours = (full_time, full_time)
             label = "Vollzeit"
@@ -478,34 +766,72 @@ class SuitabilityScorer:
         reasons: List[str] = []
 
         # ── 1. Fachliche Eignung ──────────────────────────────────────────────
+        body_sections = _split_sections(body)
+        sections = Sections(
+            must=body_sections.must,
+            nice=body_sections.nice,
+            main="\n".join(filter(None, [
+                title, body_sections.main, _schlagworte_text(project_data)])),
+        )
+        must_text = sections.must
+        missing: List[str] = []
+
         # Es zählt die Gruppe mit den meisten Pluspunkten, inklusive ihrer Abzüge.
         group_scores: Dict[str, int] = {}
-        parts: Dict[str, Tuple[int, int, List[str]]] = {}
+        parts: Dict[str, GroupScore] = {}
         for group_id in self._groups:
-            parts[group_id] = self._score_group(group_id, text)
-            group_scores[group_id] = parts[group_id][0] + parts[group_id][1]
+            parts[group_id] = self._score_group(group_id, sections, title)
+            group_scores[group_id] = parts[group_id].positive + parts[group_id].negative
         best_group: Optional[str] = None
         if parts:
-            candidate = max(parts, key=lambda g: (parts[g][0], -parts[g][1]))
-            if parts[candidate][2]:
+            candidate = max(parts, key=lambda g: (parts[g].positive, -parts[g].negative))
+            if parts[candidate].reasons:
                 best_group = candidate
+        best = parts[best_group] if best_group else GroupScore()
         technical = group_scores[best_group] if best_group else 0
-        if best_group:
-            reasons.extend(parts[best_group][2])
+        reasons.extend(best.reasons)
 
+        # Zentrale Kompetenz im Titel: einmaliger Zuschlag
+        title_cfg = self._rules.get("title_bonus") or {}
+        for category in ("high", "medium"):
+            hits = best.title_hits.get(category)
+            points = int(title_cfg.get(category, 0))
+            if hits and points:
+                technical += points
+                reasons.append(
+                    f"Kernthema im Titel [{best_group}]: {', '.join(hits[:3])} ({points:+d})")
+                break
+
+        # Eine Rolle niedriger Priorität im Titel zählt immer — auch wenn eine
+        # andere Gruppe wegen eines Einzelbegriffs die meisten Pluspunkte hat.
+        low_title = sorted({
+            term for group_id, part in parts.items()
+            if group_id != best_group for term in part.low_title_hits
+        })
+        if low_title:
+            points = self._capped("low_priority", len(low_title))
+            technical += points
+            reasons.append(
+                f"Rolle niedriger Priorität im Titel: {', '.join(low_title)} ({points:+d})")
+
+        # Senior-/Beratungsbonus nur bei fachlicher Übereinstimmung
         role_cfg = self._common.get("role") or {}
-        role_hits = _matches(role_cfg.get("terms") or [], text)
-        if role_hits:
+        role_hits = _matches(role_cfg.get("terms") or [], sections.main)
+        if role_hits and best.full_hits > 0:
             points = int(role_cfg.get("points", 0))
             technical += points
             reasons.append(f"Senior-/Beratungsrolle: {', '.join(role_hits[:4])} ({points:+d})")
+        elif role_hits:
+            reasons.append(
+                f"Senior-/Beratungsrolle ({', '.join(role_hits[:4])}) ohne fachliche "
+                f"Übereinstimmung — kein Bonus")
 
         # Kompetenzbonus für nachgewiesene Praxis — je Regel höchstens einmal.
         # Steht vor Deckel und Muss-Prüfung und kann beide nicht umgehen.
         for rule in self._common.get("competency_bonuses") or []:
-            if not _matches(rule.get("requires") or [], text):
+            if not _matches(rule.get("requires") or [], sections.main):
                 continue
-            skills = _matches(rule.get("skills") or [], text)
+            skills = _matches(rule.get("skills") or [], sections.main)
             if not skills:
                 continue
             points = min(
@@ -517,8 +843,6 @@ class SuitabilityScorer:
                 f"Kompetenzbonus {rule.get('label', '')}: {', '.join(skills)} ({points:+d})"
             )
 
-        must_text = _must_sections(body)
-
         # Nicht belegte Muss-Anforderungen
         reject_reason: Optional[str] = None
         for rule in self._common.get("unsupported_must_haves") or []:
@@ -527,6 +851,7 @@ class SuitabilityScorer:
             in_must = _matches(terms, must_text)
             if not in_must:
                 continue  # bloße Erwähnung außerhalb der Anforderungen: keine Folge
+            missing.extend(in_must)
             if _matches(terms, title):
                 reject_reason = (
                     f"Nicht belegte Muss-Anforderung im Titel und in den Anforderungen: "
@@ -542,20 +867,53 @@ class SuitabilityScorer:
 
         technical = max(0, min(100, technical))
 
-        # Reine Spezialistenrolle: Deckel statt Ablehnung
-        cap, cap_reason = self._specialist_cap(title, must_text)
-        if cap is not None and technical > cap:
-            technical = cap
-            reasons.append(cap_reason)
-        elif cap is not None:
-            reasons.append(cap_reason.replace(
-                f" — fachliche Eignung auf {cap} begrenzt", ""))
+        # Einzelne beiläufige Erwähnung: höchstens ein fachlicher Treffer und
+        # kein Kernthema im Titel ergibt keine mittlere Eignung.
+        single_cap = self._rules.get("single_mention_cap")
+        if (single_cap is not None and best.full_hits <= 1 and not best.title_hits
+                and technical > int(single_cap)):
+            technical = int(single_cap)
+            reasons.append(
+                f"Nur ein fachlicher Treffer und kein Kernthema im Titel "
+                f"— fachliche Eignung auf {int(single_cap)} begrenzt")
+
+        # Reine Spezialistenrollen: Deckel statt Ablehnung (der niedrigste gilt)
+        for cap, cap_reason, required in sorted(
+                self._specialist_caps(title, must_text), key=lambda c: c[0]):
+            missing.extend(required)
+            if technical > cap:
+                technical = cap
+                reasons.append(cap_reason)
+            else:
+                reasons.append(cap_reason.replace(
+                    f" — fachliche Eignung auf {cap} begrenzt", ""))
+
+        # Nicht bestätigte Anforderungen: keine Anhebung auf "hoch", solange
+        # eine verlangte Kenntnis nicht bestätigt ist — stattdessen prüfen.
+        high_threshold = int(self._thresholds.get("high", 50))
+        for rule in self._common.get("unconfirmed_requirements") or []:
+            if not _matches(rule.get("requires") or [], sections.main) and rule.get("requires"):
+                continue
+            found = _matches(rule.get("terms") or [], sections.main)
+            if not found:
+                continue
+            missing.extend(found)
+            label = rule.get("label") or "Nicht bestätigte Anforderung"
+            if technical >= high_threshold:
+                technical = high_threshold - 1
+                reasons.append(
+                    f"{label}: {', '.join(found)} — bitte prüfen; fachliche Eignung "
+                    f"bleibt unter {high_threshold}")
+            else:
+                reasons.append(f"{label}: {', '.join(found)} — bitte prüfen")
+
+        missing = list(dict.fromkeys(missing))
 
         if reject_reason:
             technical = min(technical, int(self._rules.get("reject_score_cap", 10)))
             reasons.append(reject_reason)
             decision = DECISION_REJECT
-        elif technical >= int(self._thresholds.get("high", 50)):
+        elif technical >= high_threshold:
             decision = DECISION_HIGH
         elif technical >= int(self._thresholds.get("medium", 25)):
             decision = DECISION_MEDIUM
@@ -563,10 +921,16 @@ class SuitabilityScorer:
             decision = DECISION_LOW
 
         # ── 2. Rahmenbedingungen ──────────────────────────────────────────────
+        end_shown = _parse_end(conditions_text, self._today or date.today())
         conditions = {
+            "contract_type": self._check_contract_type(title, conditions_text),
             "work_mode": self._check_work_mode(conditions_text),
-            "workload": self._check_workload(conditions_text),
+            "workload": self._check_workload(conditions_text, title),
             "start": self._check_start(conditions_text),
+            # Reine Anzeige, getrennt vom Starttermin; wird nicht bewertet.
+            "duration": ConditionCheck(
+                STATUS_NOT_CHECKED if end_shown else STATUS_UNKNOWN, end_shown,
+                None if end_shown else "Keine Laufzeit angegeben"),
         }
 
         # ── 3. Gesamtwert und Empfehlung ──────────────────────────────────────
@@ -576,6 +940,8 @@ class SuitabilityScorer:
             score += int(adjustments.get("onsite_only", 0))
         if conditions["workload"].status == STATUS_NOT_OK:
             score += int(adjustments.get("workload_outside", 0))
+        if conditions["contract_type"].status == STATUS_NOT_OK:
+            score += int(adjustments.get("not_freelance", 0))
         score = max(0, min(100, score))
 
         recommendation, why = self._recommend(decision, conditions, reject_reason)
@@ -588,6 +954,7 @@ class SuitabilityScorer:
             best_group=best_group,
             group_scores=group_scores,
             reasons=reasons,
+            missing_requirements=missing,
             conditions=conditions,
             recommendation_reasons=why,
             reject_reason=reject_reason,
@@ -599,17 +966,28 @@ class SuitabilityScorer:
         conditions: Dict[str, ConditionCheck],
         reject_reason: Optional[str],
     ) -> Tuple[str, List[str]]:
-        names = {"work_mode": "Arbeitsort", "workload": "Auslastung", "start": "Starttermin"}
+        names = {"contract_type": "Vertragsart", "work_mode": "Arbeitsort",
+                 "workload": "Auslastung", "start": "Starttermin"}
         violated = [
-            k for k, c in conditions.items() if c.status in (STATUS_NOT_OK, STATUS_CONFLICT)
+            k for k, c in conditions.items()
+            if k in names and c.status in (STATUS_NOT_OK, STATUS_CONFLICT)
         ]
-        unknown = [names[k] for k, c in conditions.items() if c.status == STATUS_UNKNOWN]
+        unknown = [
+            names[k] for k, c in conditions.items()
+            if k in names and c.status == STATUS_UNKNOWN
+        ]
         why: List[str] = []
 
         if decision == DECISION_REJECT:
             return RECOMMEND_SKIP, [reject_reason or "Fachlich abgelehnt"]
         if decision == DECISION_LOW:
             return RECOMMEND_SKIP, ["Fachliche Eignung niedrig"]
+
+        contract = conditions.get("contract_type")
+        if contract is not None and contract.status == STATUS_NOT_OK:
+            # Festanstellung oder Anbieterwerbung: kein Freelance-Projekt
+            return RECOMMEND_SKIP, [
+                f"Vertragsart: {contract.value} ({contract.note or contract.status})"]
 
         for key in violated:
             check = conditions[key]

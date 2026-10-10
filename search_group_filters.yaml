@@ -21,6 +21,21 @@
 #     "Netzwerk", "Infrastruktur", "Security", "Reporting" oder "KI" — sie
 #     stehen in fast jeder Ausschreibung und erzeugen Fehltreffer.
 #
+# Starke und schwache Begriffe:
+#   - `include_terms` (stark): ein Treffer irgendwo im Text genügt.
+#   - `weak_include_terms` (schwach): Begriffe, die oft nur am Rand stehen
+#     ("Kenntnisse in Entra ID", "Erfahrung mit IT-Infrastrukturen" unter
+#     Nice-to-have). Sie erfassen ein Projekt nur, wenn sie im TITEL stehen
+#     oder zusammen mit mindestens einem weiteren Fachbegriff der Gruppe
+#     vorkommen. Sie sind damit nicht ausgeschlossen: Ein Projekt mit
+#     "Microsoft 365" im Titel oder mit "IT-Infrastruktur" plus "Firewall"
+#     wird weiterhin erfasst.
+#   - Rollenbegriffe wie "IT-Projektleitung", "Interim CIO" oder
+#     "Infrastrukturprojekt" (Gruppe B) sind ebenfalls schwach: im Titel
+#     erfassen sie, im Fließtext nur mit fachlichem Zusammenhang. Eine
+#     IT-Projektleitung für CRM, Automatisierung oder BI kommt über ihre
+#     Fachbegriffe in Gruppe A.
+#
 # Die vier Kompetenzprofile (competency_profiles/) sind davon unabhängig:
 # Jedes Projekt, das hier mindestens eine Gruppe passiert, wird gegen alle
 # vier Profile bewertet.
@@ -58,12 +73,8 @@ search_group_filters:
       - "Power Platform"
       - "Power Apps"
       # API- und Systemintegration
-      - "API-Integration*"
-      - "API-Anbindung*"
-      - "API-Schnittstelle*"
       - "Schnittstellenintegration"
       - "SaaS-Integration*"
-      - "Systemintegration"
       # Workflow- und Prozessautomatisierung
       - "Workflow-Automatisierung"
       - "Workflow Automation"
@@ -82,13 +93,6 @@ search_group_filters:
       - "KI-Integration"
       - "AI Automation"
       - "KI-Automatisierung"
-      - "KI-Agent*"
-      - "AI Agent*"
-      - "Generative KI"
-      - "Generative AI"
-      - "GenAI"
-      - "LLM"
-      - "ChatGPT"
       - "Azure OpenAI"
       - "Copilot Studio"
       - "Microsoft Copilot"
@@ -103,6 +107,20 @@ search_group_filters:
       - "KPI-Dashboard*"
       - "KPI-Reporting"
       - "SharePoint"
+    # Schwache Begriffe: nur im Titel oder zusammen mit einem weiteren
+    # Fachbegriff (siehe Kopf der Datei). Kein globaler Ausschluss.
+    weak_include_terms:
+      - "API-Integration*"
+      - "API-Anbindung*"
+      - "API-Schnittstelle*"
+      - "Systemintegration"
+      - "KI-Agent*"
+      - "AI Agent*"
+      - "Generative KI"
+      - "Generative AI"
+      - "GenAI"
+      - "LLM"
+      - "ChatGPT"
       - "Microsoft 365"
       - "M365"
 
@@ -114,8 +132,6 @@ search_group_filters:
     include_min_matches: 1
     include_terms:
       # IT-Infrastruktur
-      - "IT-Infrastruktur*"
-      - "IT Infrastructure"
       - "Serverinfrastruktur"
       - "Rechenzentrum*"
       - "Windows Server"
@@ -123,7 +139,6 @@ search_group_filters:
       - "Hyper-V"
       - "Systemadministr*"
       - "IT-Administr*"
-      - "Systemintegration"
       # Netzwerk
       - "Netzwerkinfrastruktur"
       - "Netzwerkadministr*"
@@ -152,12 +167,6 @@ search_group_filters:
       - "Palo Alto"
       - "Check Point"
       # Microsoft 365
-      - "Microsoft 365"
-      - "M365"
-      - "Office 365"
-      - "O365"
-      - "Entra ID"
-      - "Azure AD"
       - "Active Directory"
       - "Intune"
       - "Exchange Online"
@@ -175,7 +184,6 @@ search_group_filters:
       - "Sicherheitsaudit*"
       - "IT-Sicherheit*"
       - "IT-Security"
-      - "Informationssicherheit*"
       - "Cyber Security"
       - "Cybersicherheit"
       - "ISO 27001"
@@ -190,6 +198,34 @@ search_group_filters:
       - "Endpoint Security"
       - "Microsoft Defender"
       - "Zero Trust"
+    # Schwache Begriffe: nur im Titel oder zusammen mit einem weiteren
+    # Fachbegriff (siehe Kopf der Datei). Kein globaler Ausschluss.
+    weak_include_terms:
+      - "IT-Infrastruktur*"
+      - "IT Infrastructure"
+      - "Systemintegration"
+      - "Microsoft 365"
+      - "M365"
+      - "Office 365"
+      - "O365"
+      - "Entra ID"
+      - "Azure AD"
+      - "Informationssicherheit*"
+      # IT-Projektleitung, Interim IT Management, Infrastrukturprojektleitung
+      - "IT-Projektleit*"
+      - "IT-Projektmanag*"
+      - "IT Project Manag*"
+      - "Technische Projektleitung"
+      - "Technischer Projektleiter"
+      - "Technische Projektleiterin"
+      - "Technical Project Manag*"
+      - "Infrastrukturprojekt*"
+      - "Infrastructure Project*"
+      - "IT-Leiter*"
+      - "IT-Leitung"
+      - "Interim CIO"
+      - "Interim CTO"
+      - "Head of IT"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RSS-Vorfilter: spart Projektseiten-Abrufe.

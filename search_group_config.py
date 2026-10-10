@@ -371,6 +371,12 @@ def apply_default_topic_filters(
                 filters.setdefault(
                     "include_min_matches", group_defaults.get("include_min_matches", 1)
                 )
+                # Schwache Begriffe gehören zu den Standardbegriffen: Wer
+                # include_terms selbst setzt, bestimmt auch diese Liste selbst.
+                if group_defaults.get("weak_include_terms"):
+                    filters.setdefault(
+                        "weak_include_terms", list(group_defaults["weak_include_terms"])
+                    )
                 group["filters"] = filters
         if not (group.get("filters") or {}).get("include_terms"):
             logger.warning(

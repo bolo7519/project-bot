@@ -328,12 +328,25 @@ class TestNoBlanketExclusion:
             "title": "IT-Projektleiter CRM-Einführung (m/w/d)",
             "description": (
                 "Einführung von Salesforce im Vertrieb. Remote.\n"
-                "Anforderungen:\n- Erfahrung mit ABAP von Vorteil für die Schnittstelle"
+                "Anforderungen:\n- Erfahrung mit ABAP für die Schnittstelle"
             ),
         }
         r = scorer.score_project(project)
         assert r.decision != DECISION_REJECT
         assert any("Muss-Abschnitt" in reason and "(-25)" in reason for reason in r.reasons)
+        assert "ABAP" in r.missing_requirements
+
+    def test_nice_to_have_requirement_is_not_penalised(self, scorer):
+        project = {
+            "title": "IT-Projektleiter CRM-Einführung (m/w/d)",
+            "description": (
+                "Einführung von Salesforce im Vertrieb. Remote.\n"
+                "Anforderungen:\n- Erfahrung mit ABAP von Vorteil für die Schnittstelle"
+            ),
+        }
+        r = scorer.score_project(project)
+        assert not any("(-25)" in reason for reason in r.reasons)
+        assert r.missing_requirements == []
 
     def test_title_mention_without_must_section_is_not_rejected(self, scorer):
         project = {
@@ -466,7 +479,8 @@ class TestPipelineStoresSuitability:
         for key, (_md, fm) in files.items():
             suit = fm["suitability"]
             assert suit["technical"]["reasons"], key
-            assert set(suit["conditions"]) == {"work_mode", "workload", "start"}
+            assert set(suit["conditions"]) == {
+                "contract_type", "work_mode", "workload", "start", "duration"}
             assert suit["recommendation"] in (RECOMMEND_APPLY, RECOMMEND_REVIEW, RECOMMEND_SKIP)
             assert {p["profile_id"] for p in fm["pre_scores"]["profiles"]} == set(PROFILE_IDS)
         assert files["netsec"][1]["suitability"]["technical"]["decision"] == DECISION_MEDIUM
@@ -575,10 +589,11 @@ class TestConditions:
     def test_missing_information_is_unknown_not_fulfilled(self, scorer):
         r = scorer.score_project(BASE)
         assert {k: c.status for k, c in r.conditions.items()} == {
-            "work_mode": STATUS_UNKNOWN, "workload": STATUS_UNKNOWN, "start": STATUS_UNKNOWN,
+            "contract_type": STATUS_UNKNOWN, "work_mode": STATUS_UNKNOWN,
+            "workload": STATUS_UNKNOWN, "start": STATUS_UNKNOWN, "duration": STATUS_UNKNOWN,
         }
         assert all(c.value is None for c in r.conditions.values())
-        assert any("Offen (unbekannt): Arbeitsort, Auslastung, Starttermin" in x
+        assert any("Offen (unbekannt): Vertragsart, Arbeitsort, Auslastung, Starttermin" in x
                    for x in r.recommendation_reasons)
 
     def test_conditions_do_not_change_technical_score(self, scorer):
@@ -921,7 +936,8 @@ class TestPowerBiBonus:
 
     def test_developer_project_reaches_high_through_bonus(self, scorer):
         r = scorer.score_project(PBI_DEVELOPER)
-        assert r.technical_score == 55 and r.decision == DECISION_HIGH
+        # wie bisher 55, zusätzlich +15 für das Kernthema im Titel
+        assert r.technical_score == 70 and r.decision == DECISION_HIGH
         bonus = _bonus_reasons(r)
         assert len(bonus) == 1 and "DAX, Power Query" in bonus[0] and "(+10)" in bonus[0]
 
@@ -935,8 +951,8 @@ class TestPowerBiBonus:
 
     def test_one_skill_gives_half_bonus(self, scorer):
         project = {
-            "title": "Power BI Berichte (m/w/d)",
-            "description": "Berichte in Power BI, Datenquellen per Power Query anbinden.",
+            "title": "Power BI Datenanbindung (m/w/d)",
+            "description": "Datenquellen in Power BI per Power Query anbinden.",
         }
         bonus = _bonus_reasons(scorer.score_project(project))
         assert len(bonus) == 1 and bonus[0].endswith("Power Query (+5)")
@@ -949,7 +965,28 @@ class TestPowerBiBonus:
         assert _bonus_reasons(scorer.score_project(project)) == []
 
     def test_no_bonus_for_power_bi_alone(self, scorer):
-        assert _bonus_reasons(scorer.score_project(PBI_MANAGEMENT_REPORTING)) == []
+        project = {
+            "title": "Power BI Einführung (m/w/d)",
+            "description": "Einführung von Power BI im Controlling. Remote.",
+        }
+        assert _bonus_reasons(scorer.score_project(project)) == []
+
+    def test_reporting_context_counts_within_the_same_bonus(self, scorer):
+        # Reporting und KPI-Dashboards zählen im Power-BI-Zusammenhang, aber
+        # im selben, auf 10 Punkte begrenzten Bonus wie DAX und Power Query.
+        bonus = _bonus_reasons(scorer.score_project(PBI_MANAGEMENT_REPORTING))
+        assert len(bonus) == 1 and "Reporting" in bonus[0] and "(+10)" in bonus[0]
+        everything = dict(PBI_DEVELOPER, description=PBI_DEVELOPER["description"] + (
+            "\nReporting, Dashboards, KPI, Datenanalyse, Datenvisualisierung"))
+        bonus = _bonus_reasons(scorer.score_project(everything))
+        assert len(bonus) == 1 and "(+10)" in bonus[0]
+
+    def test_no_reporting_bonus_without_power_bi(self, scorer):
+        project = {
+            "title": "Controller Reporting (m/w/d)",
+            "description": "Monatliches Reporting und Dashboards in Excel.",
+        }
+        assert _bonus_reasons(scorer.score_project(project)) == []
 
     def test_bonus_does_not_lift_specialist_cap(self, scorer):
         r = scorer.score_project(DATA_ENGINEER)
@@ -988,21 +1025,26 @@ class TestPowerBiBonus:
             }.items()
         }
         assert got == {
-            "entwickler": (55, DECISION_HIGH, RECOMMEND_APPLY),
-            "management_reporting": (55, DECISION_HIGH, RECOMMEND_APPLY),
-            "power_bi_sharepoint": (65, DECISION_HIGH, RECOMMEND_APPLY),
+            # jeweils +15 Kernthema im Titel; Management Reporting zusätzlich
+            # +10 Bonus für den Reporting-Zusammenhang
+            "entwickler": (70, DECISION_HIGH, RECOMMEND_APPLY),
+            "management_reporting": (80, DECISION_HIGH, RECOMMEND_APPLY),
+            "power_bi_sharepoint": (80, DECISION_HIGH, RECOMMEND_APPLY),
             "data_engineer": (40, DECISION_MEDIUM, RECOMMEND_REVIEW),
         }
 
-    def test_eight_real_projects_are_unchanged(self, results):
+    def test_eight_real_projects_keep_their_classification(self, results):
+        # Einstufung und Empfehlung der acht Projekte bleiben gleich. Zwei
+        # Werte ändern sich gewollt: "vuln" +8 (IT-Sicherheit im Titel),
+        # "sap" 10 → 4 (kein Beratungsbonus ohne fachliche Übereinstimmung).
         got = {k: (r.technical_score, r.decision, r.recommendation) for k, r in results.items()}
         low = (0, DECISION_LOW, RECOMMEND_SKIP)
         assert got == {
             "netsec": (40, DECISION_MEDIUM, RECOMMEND_REVIEW),
             "n8n": (35, DECISION_MEDIUM, RECOMMEND_REVIEW),
-            "vuln": (26, DECISION_MEDIUM, RECOMMEND_REVIEW),
+            "vuln": (34, DECISION_MEDIUM, RECOMMEND_REVIEW),
             "pega": (10, DECISION_REJECT, RECOMMEND_SKIP),
-            "sap": (10, DECISION_REJECT, RECOMMEND_SKIP),
+            "sap": (4, DECISION_REJECT, RECOMMEND_SKIP),
             "supporter_bad_toelz": low, "supporter_freiburg": low, "supporter_rottweil": low,
         }
         assert all(_bonus_reasons(r) == [] for r in results.values())
