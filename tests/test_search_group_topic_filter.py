@@ -285,7 +285,7 @@ class TestDefaultTopicFilters:
         terms_b = set(default_filters[GROUP_B]["include_terms"])
         assert terms_a != terms_b
         # Überschneidung nur dort, wo sie fachlich gewollt ist
-        assert terms_a & terms_b == {"Systemintegration"}
+        assert terms_a & terms_b == {"Systemintegration", "Microsoft 365", "M365"}
 
     def test_make_replaced_by_makecom_and_integromat(self, default_filters):
         terms = {t.lower() for t in default_filters[GROUP_A]["include_terms"]}

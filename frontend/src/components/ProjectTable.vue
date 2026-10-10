@@ -90,7 +90,7 @@
             <td>{{ project.company || 'N/A' }}</td>
             <td>
               <span v-if="project.pre_eval_score !== null" class="score">
-                {{ project.pre_eval_score }}%
+                {{ formatPreEvalScore(project) }}
               </span>
               <span v-else class="no-score">N/A</span>
             </td>
@@ -159,7 +159,7 @@
             <span class="detail-label">Pre-eval Score:</span>
             <span class="detail-value">
               <span v-if="project.pre_eval_score !== null" class="score">
-                {{ project.pre_eval_score }}%
+                {{ formatPreEvalScore(project) }}
               </span>
               <span v-else class="no-score">N/A</span>
             </span>
@@ -239,6 +239,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useProjectsStore } from '../stores/projects'
 import ProjectActions from './ProjectActions.vue'
+import { formatPreEvalScore } from '../services/scoreLabel'
 
 // Props
 const props = defineProps({

@@ -1,9 +1,9 @@
 # Kompetenzprofil: Power BI & SharePoint
 
-<!-- PLATZHALTER: Dieses Profil enthält noch keine finalen Qualifikationen.
-     Alle markierten Felder [PLACEHOLDER] müssen vom Nutzer überprüft und
-     ergänzt werden, bevor dieses Profil für echte Bewerbungen verwendet wird.
-     Keine Qualifikationen wurden erfunden. -->
+<!-- STAND 10.10.2026: Bereinigt auf vom Nutzer genannte Schwerpunkte und
+     Erfahrungen. Zuvor enthaltene, nicht belegte Platzhalter wurden entfernt.
+     Mit [PLACEHOLDER] markierte Felder sind
+     weiterhin vom Nutzer zu ergänzen. Keine Qualifikationen wurden erfunden. -->
 
 ## Profil-ID
 
@@ -19,58 +19,45 @@ der Einrichtung von Collaboration-Plattformen auf Basis des Microsoft-Stacks.
 
 ### Business Intelligence / Reporting
 - Power BI
-- Power BI Desktop / Power BI Service / Power BI Embedded
-- DAX (Data Analysis Expressions)
-- Power Query / M-Sprache
-- Tableau
-- QlikView / Qlik Sense
-- Looker
-- Business Intelligence / BI
-- Data Warehouse / DWH
-- Data Mart
-- Reporting
+- DAX / DAX-Formeln
+- Power Query
+- Datenaufbereitung
+- Power BI Dashboard
+- Power BI Reporting
+- Management Reporting
 - KPI-Dashboard
-- <!-- [PLACEHOLDER] Weitere BI-Tools eintragen -->
-
-### Daten / Analytics
-- SQL / T-SQL
-- Azure Synapse Analytics
-- Azure Data Factory
-- Data Lake
-- ETL / ELT
-- Data Modelling
-- Star Schema / Snowflake Schema
-- <!-- [PLACEHOLDER] Weitere Datenplattformen eintragen -->
+- KPI-Reporting
+- Business Intelligence / BI
+- Reporting
+- <!-- [PLACEHOLDER] Weitere BI-Themen mit eigener Erfahrung eintragen -->
 
 ### SharePoint / Microsoft 365
-- SharePoint Online / SharePoint Server
-- SharePoint Administration
+- SharePoint
+- SharePoint Online
 - Microsoft 365 / M365
-- Microsoft Teams
-- Power Apps
-- Power Automate
-- Viva Connections
 - <!-- [PLACEHOLDER] Weitere M365-Komponenten eintragen -->
 
 ### Rollen / Tätigkeiten
-- Power BI Entwickler / Power BI Developer
-- BI Analyst
+- Power BI Consultant
+- Power BI Berater
 - BI Consultant
-- SharePoint Administrator
+- SharePoint Consultant
 - M365 Consultant
-- Data Engineer
+- Technische Projektleitung
 - <!-- [PLACEHOLDER] Weitere Bezeichnungen eintragen -->
 
-## Ausschlusskriterien
-
-<!-- [PLACEHOLDER] Begriffe eintragen, die trotz Keyword-Überschneidung
-     nicht zum Profil passen (z.B. reine Python Data-Science-Projekte ohne M365) -->
-
 ## Erfahrungshinweise
+
+- **Power BI:** praktische, selbst ausgeführte Arbeit mit DAX-Formeln und
+  Power Query (vom Nutzer am 10.10.2026 ausdrücklich bestätigt).
 
 <!-- [PLACEHOLDER] Konkrete Projekte / Erfahrungen aus dem Lebenslauf eintragen.
      Keine Einträge vorhanden ohne Nutzerbestätigung. -->
 
+<!-- Nicht als Keyword führen — keine praktische Erfahrung:
+     n8n (nur übertragbare Kompetenz), Pega-Entwicklung, SAP-Entwicklung.
+     Historische Zertifikate werden nicht als aktuell ausgewiesen. -->
+
 ---
-_Letzte Überarbeitung: [PLACEHOLDER: Datum eintragen]_
+_Letzte Überarbeitung: 10.10.2026 (Bereinigung unbelegter Platzhalter)_
 _Status: ENTWURF — Noch nicht für echte Bewerbungen freigegeben_

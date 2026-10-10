@@ -592,7 +592,8 @@ class EvalPromptBuilder:
         Extrahiert die wichtigsten Keywords aus einem Kompetenzprofil.
         Kürzt auf max_chars — das Profil liefert Referenz-Keywords, kein CV.
         """
-        # Überschriften und Platzhalter entfernen
+        # Kommentare (auch mehrzeilige), Überschriften und Platzhalter entfernen
+        profile_md = re.sub(r'<!--.*?-->', '', profile_md, flags=re.DOTALL)
         lines = profile_md.splitlines()
         keywords: List[str] = []
         for line in lines:

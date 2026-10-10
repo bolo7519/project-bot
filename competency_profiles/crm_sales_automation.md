@@ -1,9 +1,9 @@
 # Kompetenzprofil: CRM & Sales Automation
 
-<!-- PLATZHALTER: Dieses Profil enthält noch keine finalen Qualifikationen.
-     Alle markierten Felder [PLACEHOLDER] müssen vom Nutzer überprüft und
-     ergänzt werden, bevor dieses Profil für echte Bewerbungen verwendet wird.
-     Keine Qualifikationen wurden erfunden. -->
+<!-- STAND 10.10.2026: Bereinigt auf vom Nutzer genannte Schwerpunkte und
+     Erfahrungen. Zuvor enthaltene, nicht belegte Platzhalter wurden entfernt.
+     Mit [PLACEHOLDER] markierte Felder sind
+     weiterhin vom Nutzer zu ergänzen. Keine Qualifikationen wurden erfunden. -->
 
 ## Profil-ID
 
@@ -18,66 +18,44 @@ von CRM-Systemen und Vertriebsautomatisierung in mittelständischen Unternehmen.
 ## Kern-Keywords
 
 Diese Keywords werden für das TF-IDF-Scoring verwendet.
-Ergänze, entferne oder gewichte nach eigener Einschätzung.
 
 ### Systeme / Plattformen
+- Bitrix24
 - Salesforce
-- HubSpot
-- Microsoft Dynamics 365 / Dynamics CRM
-- Zoho CRM
-- Pipedrive
-- SAP CRM
+- CRM-Beratung
+- CRM-Integration
 - <!-- [PLACEHOLDER] Weitere CRM-Systeme mit eigener Erfahrung eintragen -->
 
 ### Automatisierung / Integration
 - Make.com / Integromat
 - Zapier
-- n8n
-- Power Automate / Microsoft Flow
-- API-Integration
-- Webhook
-- RPA
-- <!-- [PLACEHOLDER] Weitere Automatisierungstools eintragen -->
-
-### Vertriebsprozesse
-- Lead Management
-- Pipeline-Management
-- Sales Funnel
-- Kampagnenmanagement
-- E-Mail-Marketing-Automation
+- ActiveCampaign
 - Marketing Automation
-- Customer Journey
-- <!-- [PLACEHOLDER] Weitere Vertriebsprozesse eintragen -->
+- Workflow-Automatisierung
+- SaaS-Integration
+- App-Integration
+- <!-- [PLACEHOLDER] Weitere Automatisierungstools eintragen -->
 
 ### Rollen / Tätigkeiten
 - CRM-Einführung
-- CRM-Migration
-- CRM-Customizing
-- Salesforce Administrator
+- CRM-Berater
 - CRM-Projektleiter
 - Sales Automation Consultant
+- Technische Projektleitung
 - <!-- [PLACEHOLDER] Weitere relevante Bezeichnungen eintragen -->
-
-## Ausschlusskriterien
-
-Projekte mit diesen Begriffen passen typischerweise NICHT zu diesem Profil:
-- [PLACEHOLDER]
 
 ## Erfahrungshinweise
 
-<!-- [PLACEHOLDER] Konkrete Projekte / Erfahrungen aus dem Lebenslauf eintragen.
-     Beispielstruktur: -->
-
+- **Make.com und Zapier:** praktische Hands-on-Erfahrung, selbst umgesetzt —
+  überwiegend mit vorkonfigurierten, individuell angepassten App-Integrationen.
 - **cocon Unternehmensgruppe (2019–2022):** Einführung eines dezentralen
   CRM-Systems integriert mit Vertrieb, Finanzen und Kommunikation.
   [PLACEHOLDER: Details ergänzen — System, Umfang, Ergebnis]
 
-## Gewichtung
-
-Für das TF-IDF-Scoring werden alle Keywords gleichwertig behandelt.
-Eine spätere Gewichtungsanpassung kann über den `weights`-Eintrag in der
-Hauptkonfiguration erfolgen.
+<!-- Nicht als Keyword führen — keine praktische Erfahrung:
+     n8n (nur übertragbare Kompetenz), Pega-Entwicklung, SAP-Entwicklung.
+     Historische Zertifikate werden nicht als aktuell ausgewiesen. -->
 
 ---
-_Letzte Überarbeitung: [PLACEHOLDER: Datum eintragen]_
+_Letzte Überarbeitung: 10.10.2026 (Bereinigung unbelegter Platzhalter)_
 _Status: ENTWURF — Noch nicht für echte Bewerbungen freigegeben_

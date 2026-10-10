@@ -41,7 +41,7 @@
             </div>
             <div class="detail-item">
               <label>Pre-eval Score:</label>
-              <span v-if="project.pre_eval_score !== null">{{ project.pre_eval_score }}%</span>
+              <span v-if="project.pre_eval_score !== null">{{ formatPreEvalScore(project) }}</span>
               <span v-else>N/A</span>
             </div>
             <div class="detail-item">
@@ -191,6 +191,7 @@
 import { ref, computed, watch } from 'vue'
 import { useProjectsStore } from '../stores/projects'
 import axios from 'axios'
+import { formatPreEvalScore } from '../services/scoreLabel'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002'
 

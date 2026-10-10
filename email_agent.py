@@ -24,6 +24,7 @@ from markdown_renderer import MarkdownRenderer
 from search_group_dispatcher import SearchGroupDispatcher, DispatchResult
 from filter_engine import FilterEngine, filter_config_from_search_group
 from pre_scorer import PreScorer
+from suitability_scorer import SuitabilityScorer
 import importlib
 
 logger = logging.getLogger(__name__)
@@ -1090,6 +1091,7 @@ class EmailAgent:
         projects_saved = 0
         urls_skipped_dedupe = 0
         projects_filtered = 0  # Phase 3: vom Hard-Filter abgelehnt
+        projects_unsuitable = 0  # gespeichert, aber wegen Muss-Anforderung abgelehnt
 
         # Initialize services
         dedupe_service = DedupeService(output_dir)
@@ -1102,6 +1104,7 @@ class EmailAgent:
         # Phase 3: FilterEngine + PreScorer (nur im Phase-2-Pfad mit search_group_config)
         filter_engine: "FilterEngine | None" = None
         pre_scorer: "PreScorer | None" = _pre_scorer
+        suitability_scorer: "SuitabilityScorer | None" = None
         if dispatcher is not None and search_group_config is not None:
             try:
                 filter_cfg = filter_config_from_search_group(search_group_config)
@@ -1119,6 +1122,21 @@ class EmailAgent:
                         "PreScorer konnte nicht initialisiert werden — Pre-Scoring deaktiviert",
                         extra={"error": str(exc)},
                     )
+            # Eignungsbewertung (regelbasiert, lokal) — getrennt von der Erfassung
+            try:
+                # Verfügbarkeit nur, wenn in config.yaml ausdrücklich gesetzt
+                # (applicant.available_from); sonst gilt suitability_rules.yaml.
+                applicant_cfg = self.config.get('applicant') or {}
+                if 'available_from' in applicant_cfg:
+                    suitability_scorer = SuitabilityScorer(
+                        available_from=applicant_cfg.get('available_from'))
+                else:
+                    suitability_scorer = SuitabilityScorer()
+            except Exception as exc:
+                self.logger.warning(
+                    "SuitabilityScorer konnte nicht initialisiert werden — Eignungsbewertung deaktiviert",
+                    extra={"error": str(exc)},
+                )
 
         for entry in entries:
             try:
@@ -1195,12 +1213,25 @@ class EmailAgent:
                                 extra={"url": url, "error": str(exc)},
                             )
 
+                    # ── Eignungsbewertung (nach der Erfassung, unabhängig von der Gruppe) ──
+                    suitability = None
+                    if suitability_scorer is not None:
+                        try:
+                            suitability = suitability_scorer.score_project(schema)
+                        except Exception as exc:
+                            self.logger.warning(
+                                "Eignungsbewertung fehlgeschlagen",
+                                extra={"url": url, "error": str(exc)},
+                            )
+
                     # ── Phase 3: Ergebnisse in extra_metadata bündeln ──────────
                     phase3_extra: Dict[str, Any] = {}
                     if filter_result_dict:
                         phase3_extra["filter_results"] = {search_group_id: filter_result_dict}
                     if pre_score_dict:
                         phase3_extra["pre_scores"] = pre_score_dict
+                    if suitability is not None:
+                        phase3_extra["suitability"] = suitability.to_dict()
 
                     result = dispatcher.dispatch(
                         search_group_id=search_group_id,
@@ -1221,6 +1252,26 @@ class EmailAgent:
                             'search_group_id': search_group_id,
                             'url': url,
                         })
+                        # Eindeutig nicht belegte Muss-Anforderung: Projekt bleibt
+                        # gespeichert und nachvollziehbar, wird aber als abgelehnt
+                        # markiert (kein Löschen, kein Ausschluss aus der Erfassung).
+                        if (
+                            suitability is not None
+                            and suitability.rejected
+                            and isinstance(result.filepath, str)
+                        ):
+                            try:
+                                ProjectStateManager(output_dir).update_state(
+                                    result.filepath,
+                                    'rejected',
+                                    note=f"Eignungsbewertung: {suitability.reject_reason}",
+                                )
+                                projects_unsuitable += 1
+                            except Exception as exc:
+                                self.logger.warning(
+                                    "Ablehnung konnte nicht gespeichert werden",
+                                    extra={"filepath": result.filepath, "error": str(exc)},
+                                )
                     elif result.action == DispatchResult.ACTION_MERGED:
                         # Cross-group duplicate: existing file updated, counts as processed
                         urls_skipped_dedupe += 1
@@ -1316,6 +1367,7 @@ class EmailAgent:
             'projects_saved': projects_saved,
             'urls_skipped_dedupe': urls_skipped_dedupe,
             'projects_filtered': projects_filtered,
+            'projects_unsuitable': projects_unsuitable,
         }
 
     def run_rss_ingestion(self, provider_id: str, output_dir: str = 'projects', dry_run: bool = False) -> Dict[str, Any]:
@@ -1667,6 +1719,8 @@ class EmailAgent:
                 summary['urls_skipped_dedupe'] += result['urls_skipped_dedupe']
                 summary.setdefault('projects_filtered', 0)
                 summary['projects_filtered'] += result.get('projects_filtered', 0)
+                summary.setdefault('projects_unsuitable', 0)
+                summary['projects_unsuitable'] += result.get('projects_unsuitable', 0)
 
             summary['provider_summaries'][provider_id] = provider_summary
 

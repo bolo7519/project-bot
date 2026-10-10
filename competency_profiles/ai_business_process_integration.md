@@ -1,9 +1,9 @@
 # Kompetenzprofil: AI & Business Process Integration
 
-<!-- PLATZHALTER: Dieses Profil enthält noch keine finalen Qualifikationen.
-     Alle markierten Felder [PLACEHOLDER] müssen vom Nutzer überprüft und
-     ergänzt werden, bevor dieses Profil für echte Bewerbungen verwendet wird.
-     Keine Qualifikationen wurden erfunden. -->
+<!-- STAND 10.10.2026: Bereinigt auf vom Nutzer genannte Schwerpunkte und
+     Erfahrungen. Zuvor enthaltene, nicht belegte Platzhalter wurden entfernt.
+     Mit [PLACEHOLDER] markierte Felder sind
+     weiterhin vom Nutzer zu ergänzen. Keine Qualifikationen wurden erfunden. -->
 
 ## Profil-ID
 
@@ -12,60 +12,49 @@
 ## Kurzbeschreibung
 
 <!-- [PLACEHOLDER] Kurze Selbstbeschreibung (2–3 Sätze) -->
-Freelance-IT-Manager mit Erfahrung in der Integration von KI-Lösungen und
-der Automatisierung von Geschäftsprozessen in mittelständischen Organisationen.
+Freelance-IT-Manager mit Erfahrung in der Automatisierung und Digitalisierung
+von Geschäftsprozessen in mittelständischen Organisationen.
 
 ## Kern-Keywords
 
-### KI / Machine Learning
-- Artificial Intelligence / KI / AI
-- Machine Learning / ML
-- Large Language Model / LLM
-- ChatGPT / GPT-4
-- Azure OpenAI
-- Copilot (Microsoft 365 Copilot)
-- KI-Integration
-- Prompt Engineering
-- <!-- [PLACEHOLDER] Weitere KI-Technologien eintragen -->
-
 ### Prozessautomatisierung
-- Business Process Automation / BPA
-- Business Process Management / BPM
 - Workflow-Automatisierung
-- Robotic Process Automation / RPA
-- Make.com / n8n / Zapier / Power Automate
-- Low-Code / No-Code
+- Geschäftsprozessautomatisierung
+- Prozessautomatisierung
+- Digitale Geschäftsprozesse
+- Prozessdigitalisierung
+- Make.com / Integromat
+- Zapier
 - <!-- [PLACEHOLDER] Weitere Automatisierungs-Stacks eintragen -->
 
-### Integration / Middleware
+### Integration
+- SaaS-Integration
+- App-Integration
 - API-Integration
-- REST API / GraphQL
-- iPaaS (Integration Platform as a Service)
-- Azure Integration Services
-- MuleSoft
-- Boomi
-- Middleware
-- ETL-Pipeline
 - <!-- [PLACEHOLDER] Weitere Integrationsplattformen eintragen -->
 
+### KI
+- KI-Integration
+- KI-Prozessintegration
+- AI Integration
+- <!-- [PLACEHOLDER] Konkret eingesetzte KI-Werkzeuge und Projekte eintragen -->
+
 ### Rollen / Tätigkeiten
-- KI-Projektmanager
-- Digitalisierungsberater
+- IT-Prozessberatung
 - Prozessberater
-- AI Integration Consultant
-- Transformation Manager
+- Digitalisierungsberater
+- Technische Projektleitung
 - <!-- [PLACEHOLDER] Weitere Bezeichnungen eintragen -->
-
-## Ausschlusskriterien
-
-<!-- [PLACEHOLDER] Hier Begriffe eintragen, die trotz Keyword-Überschneidung
-     nicht zum Profil passen (z.B. reine Data-Science-Forschungsprojekte) -->
 
 ## Erfahrungshinweise
 
-<!-- [PLACEHOLDER] Konkrete Projekte / Erfahrungen aus dem Lebenslauf eintragen.
-     Keine Einträge vorhanden ohne Nutzerbestätigung. -->
+- **Make.com und Zapier:** praktische Hands-on-Erfahrung, selbst umgesetzt —
+  überwiegend mit vorkonfigurierten, individuell angepassten App-Integrationen.
+
+<!-- Nicht als Keyword führen — keine praktische Erfahrung:
+     n8n (nur übertragbare Kompetenz), Pega-Entwicklung, SAP-Entwicklung.
+     Historische Zertifikate werden nicht als aktuell ausgewiesen. -->
 
 ---
-_Letzte Überarbeitung: [PLACEHOLDER: Datum eintragen]_
+_Letzte Überarbeitung: 10.10.2026 (Bereinigung unbelegter Platzhalter)_
 _Status: ENTWURF — Noch nicht für echte Bewerbungen freigegeben_

@@ -1,9 +1,9 @@
 # Kompetenzprofil: IT Infrastructure & Security
 
-<!-- PLATZHALTER: Dieses Profil enthält noch keine finalen Qualifikationen.
-     Alle markierten Felder [PLACEHOLDER] müssen vom Nutzer überprüft und
-     ergänzt werden, bevor dieses Profil für echte Bewerbungen verwendet wird.
-     Keine Qualifikationen wurden erfunden. -->
+<!-- STAND 10.10.2026: Bereinigt auf vom Nutzer genannte Schwerpunkte und
+     Erfahrungen. Zuvor enthaltene, nicht belegte Platzhalter wurden entfernt.
+     Mit [PLACEHOLDER] markierte Felder sind
+     weiterhin vom Nutzer zu ergänzen. Keine Qualifikationen wurden erfunden. -->
 
 ## Profil-ID
 
@@ -17,73 +17,54 @@ IT-Infrastrukturprojekten sowie IT-Sicherheitsmaßnahmen.
 
 ## Kern-Keywords
 
-### Cloud / Infrastruktur
-- Azure / Microsoft Azure
-- AWS / Amazon Web Services
-- Google Cloud Platform / GCP
-- Kubernetes / K8s
-- Docker / Container
-- VMware / vSphere
-- Hybrid Cloud
-- On-Premises
-- Active Directory / Azure AD / Entra ID
+### Infrastruktur
+- IT-Infrastruktur
+- IT-Infrastrukturmodernisierung
+- Infrastrukturmigration
+- Standortvernetzung
+- IT-Transformation
 - Microsoft 365 / M365
-- Exchange
+- Active Directory
+- Virtualisierung
 - <!-- [PLACEHOLDER] Weitere Infrastrukturkomponenten eintragen -->
 
 ### Netzwerk
-- Netzwerk-Management
+- Sophos
 - Firewall
-- Cisco
 - VPN
-- LAN / WAN
-- WLAN / Wi-Fi
-- SD-WAN
+- WAN
+- Routing
+- Switching
+- VLAN
+- Netzwerksegmentierung
+- Netzwerkmodernisierung
 - <!-- [PLACEHOLDER] Weitere Netzwerktechnologien eintragen -->
 
-### Security / Compliance
-- IT-Sicherheit / Cybersecurity
-- SIEM
-- SOC (Security Operations Center)
-- ISO 27001
-- ISMS
-- Penetration Test / Pentest
-- Vulnerability Management
-- Zero Trust
-- BSI-Grundschutz
-- DSGVO / GDPR
-- NIS2
-- <!-- [PLACEHOLDER] Weitere Security-Frameworks eintragen -->
-
-### DevOps / Operations
-- DevOps
-- CI/CD
-- Infrastructure as Code / IaC
-- Terraform
-- Ansible
-- Monitoring
-- ITIL
-- <!-- [PLACEHOLDER] Weitere DevOps-Werkzeuge eintragen -->
+### Security
+- Infrastructure Security
+- Security Governance
+- Security Assessment
+- IT-Sicherheit
+- <!-- [PLACEHOLDER] Weitere Security-Themen mit eigener Erfahrung eintragen -->
 
 ### Rollen / Tätigkeiten
+- Interim IT Management
 - IT-Leiter (interim)
-- IT-Infrastruktur-Manager
-- Cloud Architect
-- Security Manager
-- DevOps Engineer
+- Senior Infrastructure Consulting
+- IT-Infrastruktur-Berater
+- Technische Projektleitung
 - IT-Projektmanager
 - <!-- [PLACEHOLDER] Weitere Bezeichnungen eintragen -->
-
-## Ausschlusskriterien
-
-<!-- [PLACEHOLDER] Begriffe eintragen, die trotz Keyword-Überschneidung
-     nicht zum Profil passen -->
 
 ## Erfahrungshinweise
 
 <!-- [PLACEHOLDER] Konkrete Projekte / Erfahrungen aus dem Lebenslauf eintragen.
      Keine Einträge vorhanden ohne Nutzerbestätigung. -->
 
+<!-- Nicht als Keyword führen — keine praktische Erfahrung:
+     n8n (nur übertragbare Kompetenz), Pega-Entwicklung, SAP-Entwicklung.
+     Historische Zertifikate werden nicht als aktuell ausgewiesen. -->
+
 ---
-_Letzte Überarbeitung: [PLACEHOLDER: Datum eintragen]_
+_Letzte Überarbeitung: 10.10.2026 (Bereinigung unbelegter Platzhalter)_
 _Status: ENTWURF — Noch nicht für echte Bewerbungen freigegeben_
