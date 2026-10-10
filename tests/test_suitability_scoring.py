@@ -859,7 +859,7 @@ class TestPowerBi:
     def test_required_power_bi_practice_is_not_treated_as_specialisation(self, scorer):
         """DAX/Power Query als Anforderung ist belegte Praxis, kein Deckel."""
         r = scorer.score_project(PBI_DEVELOPER)
-        assert r.technical_score > 40
+        assert r.technical_score >= 50
 
     def test_data_engineering_specialist_is_capped_not_rejected(self, scorer):
         r = scorer.score_project(DATA_ENGINEER)
@@ -902,3 +902,174 @@ class TestPowerBi:
         engine = FilterEngine(FilterConfig.from_dict(load_default_topic_filters()[A]))
         for project in (PBI_DEVELOPER, PBI_MANAGEMENT_REPORTING, PBI_SHAREPOINT, DATA_ENGINEER):
             assert engine.apply(project, A).passed is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 12 — Schwelle 50 und einmaliger Power-BI-Kompetenzbonus
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _bonus_reasons(result) -> list:
+    return [x for x in result.reasons if x.startswith("Kompetenzbonus")]
+
+
+class TestPowerBiBonus:
+
+    def test_high_threshold_is_50(self):
+        rules = yaml.safe_load((REPO_ROOT / "suitability_rules.yaml").read_text("utf-8"))
+        assert rules["suitability"]["thresholds"] == {"high": 50, "medium": 25}
+
+    def test_developer_project_reaches_high_through_bonus(self, scorer):
+        r = scorer.score_project(PBI_DEVELOPER)
+        assert r.technical_score == 55 and r.decision == DECISION_HIGH
+        bonus = _bonus_reasons(r)
+        assert len(bonus) == 1 and "DAX, Power Query" in bonus[0] and "(+10)" in bonus[0]
+
+    def test_bonus_is_applied_once_and_capped_at_10(self, scorer):
+        text = PBI_DEVELOPER["description"] + (
+            "\nDAX, DAX-Formeln, DAX-Measures, Power Query, Power Query, Power BI, Power BI")
+        r = scorer.score_project(dict(PBI_DEVELOPER, description=text))
+        bonus = _bonus_reasons(r)
+        assert len(bonus) == 1 and "(+10)" in bonus[0]
+        assert r.technical_score == scorer.score_project(PBI_DEVELOPER).technical_score
+
+    def test_one_skill_gives_half_bonus(self, scorer):
+        project = {
+            "title": "Power BI Berichte (m/w/d)",
+            "description": "Berichte in Power BI, Datenquellen per Power Query anbinden.",
+        }
+        bonus = _bonus_reasons(scorer.score_project(project))
+        assert len(bonus) == 1 and bonus[0].endswith("Power Query (+5)")
+
+    def test_no_bonus_without_power_bi(self, scorer):
+        project = {
+            "title": "Excel-Spezialist (m/w/d)",
+            "description": "Datenaufbereitung mit Power Query in Excel.",
+        }
+        assert _bonus_reasons(scorer.score_project(project)) == []
+
+    def test_no_bonus_for_power_bi_alone(self, scorer):
+        assert _bonus_reasons(scorer.score_project(PBI_MANAGEMENT_REPORTING)) == []
+
+    def test_bonus_does_not_lift_specialist_cap(self, scorer):
+        r = scorer.score_project(DATA_ENGINEER)
+        assert len(_bonus_reasons(r)) == 1          # Bonus wurde gerechnet …
+        assert r.technical_score == 40              # … der Deckel gilt trotzdem
+        assert r.decision == DECISION_MEDIUM and r.recommendation == RECOMMEND_REVIEW
+
+    def test_bonus_does_not_override_missing_must_have(self, scorer):
+        project = {
+            "title": "Pega System Architect mit Power BI Reporting (m/w/d)",
+            "description": (
+                "Berichte in Power BI mit DAX und Power Query. Remote.\n"
+                "Must-Have\n- Zertifizierung als Certified Pega Senior System Architect"
+            ),
+        }
+        r = scorer.score_project(project)
+        assert len(_bonus_reasons(r)) == 1
+        assert r.decision == DECISION_REJECT and r.technical_score <= 10
+        assert r.recommendation == RECOMMEND_SKIP
+
+    def test_bonus_does_not_cancel_must_have_penalty(self, scorer):
+        base = scorer.score_project(PBI_DEVELOPER)
+        with_must = scorer.score_project(dict(
+            PBI_DEVELOPER,
+            description=PBI_DEVELOPER["description"] + "\n- ABAP-Kenntnisse erforderlich"))
+        assert with_must.technical_score == base.technical_score - 25
+
+    def test_all_four_power_bi_examples(self, scorer):
+        got = {
+            name: (r.technical_score, r.decision, r.recommendation)
+            for name, r in {
+                "entwickler": scorer.score_project(PBI_DEVELOPER),
+                "management_reporting": scorer.score_project(PBI_MANAGEMENT_REPORTING),
+                "power_bi_sharepoint": scorer.score_project(PBI_SHAREPOINT),
+                "data_engineer": scorer.score_project(DATA_ENGINEER),
+            }.items()
+        }
+        assert got == {
+            "entwickler": (55, DECISION_HIGH, RECOMMEND_APPLY),
+            "management_reporting": (55, DECISION_HIGH, RECOMMEND_APPLY),
+            "power_bi_sharepoint": (65, DECISION_HIGH, RECOMMEND_APPLY),
+            "data_engineer": (40, DECISION_MEDIUM, RECOMMEND_REVIEW),
+        }
+
+    def test_eight_real_projects_are_unchanged(self, results):
+        got = {k: (r.technical_score, r.decision, r.recommendation) for k, r in results.items()}
+        low = (0, DECISION_LOW, RECOMMEND_SKIP)
+        assert got == {
+            "netsec": (40, DECISION_MEDIUM, RECOMMEND_REVIEW),
+            "n8n": (35, DECISION_MEDIUM, RECOMMEND_REVIEW),
+            "vuln": (26, DECISION_MEDIUM, RECOMMEND_REVIEW),
+            "pega": (10, DECISION_REJECT, RECOMMEND_SKIP),
+            "sap": (10, DECISION_REJECT, RECOMMEND_SKIP),
+            "supporter_bad_toelz": low, "supporter_freiburg": low, "supporter_rottweil": low,
+        }
+        assert all(_bonus_reasons(r) == [] for r in results.values())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 13 — Eignungs-Score und Textähnlichkeit sind unterscheidbar
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestScoreKindsAreDistinguishable:
+
+    def test_frontmatter_keeps_both_values_under_different_keys(self, tmp_path):
+        out = tmp_path / "projects"
+        out.mkdir()
+        _run_pipeline(str(out))
+        for md in out.glob("*.md"):
+            fm = _frontmatter(md)
+            assert fm["suitability"]["method"] == "eignung_regelbasiert"
+            assert isinstance(fm["suitability"]["score"], int)          # 0–100
+            assert 0.0 <= fm["pre_scores"]["best_score"] <= 1.0         # TF-IDF, 0–1
+            assert "method" not in fm["pre_scores"]
+
+    def test_project_text_labels_both_scores(self, tmp_path):
+        import re
+        from run_search_groups_rss import _backfill_scores_for_new_files
+
+        out = tmp_path / "projects"
+        out.mkdir()
+        _run_pipeline(str(out))
+        assert _backfill_scores_for_new_files(str(out), 8) == 8
+        for md in out.glob("*.md"):
+            fm = _frontmatter(md)
+            section = md.read_text("utf-8").split("## Vorbewertung", 1)[1]
+            suit = fm["suitability"]
+            tfidf = round(fm["pre_scores"]["best_score"] * 100)
+            assert f"- **Score:** {suit['score']}/100\n" in section
+            assert "- **Score-Art:** Eignung (regelbasiert)\n" in section
+            assert (f"- **Eignung:** {suit['score']}/100 — fachlich "
+                    f"{suit['technical']['score']}/100 ({suit['technical']['decision']}), "
+                    f"Empfehlung: {suit['recommendation']}\n") in section
+            assert (f"- **Textähnlichkeit (TF-IDF):** {tfidf}/100 — bestes Profil: "
+                    f"{fm['pre_scores']['best_profile']}\n") in section
+            # genau eine Zeile, die das Dashboard als Score liest
+            assert len(re.findall(r"- \*\*Score:\*\*\s*\d+/100", section)) == 1
+
+    def test_file_without_suitability_is_labelled_as_text_similarity(self, tmp_path):
+        from run_search_groups_rss import _backfill_scores_for_new_files
+
+        out = tmp_path / "projects"
+        out.mkdir()
+        md = out / "alt.md"
+        md.write_text(
+            "---\ntitle: Power BI Berater\nstate: scraped\n---\n\n"
+            "# Power BI Berater\n\nKPI-Dashboard und Management Reporting.\n", "utf-8")
+        assert _backfill_scores_for_new_files(str(out), 1) == 1
+        section = md.read_text("utf-8").split("## Vorbewertung", 1)[1]
+        assert "- **Score-Art:** Textähnlichkeit (TF-IDF)\n" in section
+        assert "**Eignung:**" not in section
+        assert "- **Textähnlichkeit (TF-IDF):** " in section
+
+    def test_existing_score_lines_are_not_rewritten(self, tmp_path):
+        from run_search_groups_rss import _backfill_scores_for_new_files
+
+        out = tmp_path / "projects"
+        out.mkdir()
+        md = out / "bestand.md"
+        original = ("---\ntitle: x\n---\n\n# x\n\nText\n\n## Vorbewertung\n\n"
+                    "- **Score:** 15/100\n")
+        md.write_text(original, "utf-8")
+        assert _backfill_scores_for_new_files(str(out), 1) == 0
+        assert md.read_text("utf-8") == original

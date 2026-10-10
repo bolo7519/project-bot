@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RULES_PATH = Path(__file__).parent / "suitability_rules.yaml"
 
+# Kennzeichnung des Eignungs-Scores im Frontmatter
+SCORE_METHOD = "eignung_regelbasiert"
+
 # Fachliche Einstufung
 DECISION_HIGH = "hoch"
 DECISION_MEDIUM = "mittel"
@@ -245,6 +248,9 @@ class SuitabilityResult:
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
+            # Eignungs-Score (regelbasiert). Nicht zu verwechseln mit der
+            # Textähnlichkeit unter pre_scores (TF-IDF, Skala 0–1).
+            "method": SCORE_METHOD,
             "score": self.score,
             "recommendation": self.recommendation,
             "recommendation_reasons": list(self.recommendation_reasons),
@@ -493,6 +499,23 @@ class SuitabilityScorer:
             points = int(role_cfg.get("points", 0))
             technical += points
             reasons.append(f"Senior-/Beratungsrolle: {', '.join(role_hits[:4])} ({points:+d})")
+
+        # Kompetenzbonus für nachgewiesene Praxis — je Regel höchstens einmal.
+        # Steht vor Deckel und Muss-Prüfung und kann beide nicht umgehen.
+        for rule in self._common.get("competency_bonuses") or []:
+            if not _matches(rule.get("requires") or [], text):
+                continue
+            skills = _matches(rule.get("skills") or [], text)
+            if not skills:
+                continue
+            points = min(
+                int(rule.get("max_points", 10)),
+                len(skills) * int(rule.get("points_per_skill", 5)),
+            )
+            technical += points
+            reasons.append(
+                f"Kompetenzbonus {rule.get('label', '')}: {', '.join(skills)} ({points:+d})"
+            )
 
         must_text = _must_sections(body)
 

@@ -33,11 +33,9 @@ suitability:
     transferable: 8
     low_priority: -45
 
-  # Einstufung des Gesamtwerts (0–100)
+  # Einstufung der fachlichen Eignung (0–100)
   thresholds:
-    high: 45      # ab hier "hoch" — drei Treffer hoher Priorität genügen,
-                  # auch ohne Senior-/Beratungsbegriff im Text; liegt über dem
-                  # Deckel für Spezialistenrollen (40)
+    high: 50      # ab hier "hoch"
     medium: 25    # ab hier "mittel", darunter "niedrig"
 
   # Höchstwert bei Ablehnung wegen einer nicht belegten Muss-Anforderung
@@ -180,6 +178,19 @@ suitability:
         - "Consulting"
         - "Projektleit*"
         - "Interim"
+
+    # Kompetenzbonus für nachgewiesene praktische Fähigkeiten. Wird je Regel
+    # höchstens einmal vergeben und VOR Spezialisten-Deckel und Muss-Prüfung
+    # addiert — er kann also weder einen Deckel noch eine Ablehnung umgehen.
+    competency_bonuses:
+      - label: "Power BI mit nachgewiesener Praxis (DAX, Power Query)"
+        requires: ["Power BI"]        # Voraussetzung im Ausschreibungstext
+        points_per_skill: 5
+        max_points: 10
+        skills:
+          - term: "DAX"
+            with: ["Power BI", "Power Query", "DAX-Formel*", "DAX-Measure*", "Measure*"]
+          - "Power Query"
 
     # Nicht belegte Spezialisierungen. Ablehnung nur, wenn Begriff im Titel UND
     # im Muss-Abschnitt; nur im Muss-Abschnitt → Abzug; Erwähnung → nichts.

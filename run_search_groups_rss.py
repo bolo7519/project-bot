@@ -35,25 +35,67 @@ from pre_scorer import PreScorer
 _SCORE_LINE_RE = re.compile(r"- \*\*Score:\*\*\s*\d+/100", re.MULTILINE)
 
 
-def _suitability_score_from_frontmatter(content: str):
-    """Liest suitability.score aus dem YAML-Frontmatter; None, wenn nicht vorhanden."""
+SCORE_KIND_SUITABILITY = "Eignung (regelbasiert)"
+SCORE_KIND_TFIDF = "Textähnlichkeit (TF-IDF)"
+
+
+def _read_frontmatter(content: str) -> dict:
+    """Liest das YAML-Frontmatter; leeres Dict, wenn keines vorhanden oder lesbar ist."""
     if not content.startswith("---"):
-        return None
+        return {}
     end = content.find("\n---", 3)
     if end == -1:
-        return None
+        return {}
     try:
         import yaml
         frontmatter = yaml.safe_load(content[3:end]) or {}
-        score = (frontmatter.get("suitability") or {}).get("score")
+        return frontmatter if isinstance(frontmatter, dict) else {}
+    except Exception:
+        return {}
+
+
+def _suitability_score_from_frontmatter(content: str):
+    """Liest suitability.score aus dem YAML-Frontmatter; None, wenn nicht vorhanden."""
+    try:
+        score = (_read_frontmatter(content).get("suitability") or {}).get("score")
         return int(score) if score is not None else None
     except Exception:
         return None
 
 
+def _score_section(frontmatter: dict, tfidf_100, tfidf_profile) -> str:
+    """
+    Baut den Abschnitt "Vorbewertung" mit eindeutig benannten Werten.
+
+    Die Zeile "- **Score:** N/100" liest das Dashboard. "Score-Art" sagt, welcher
+    Wert dort steht; Eignung und Textähnlichkeit stehen zusätzlich getrennt.
+    """
+    suitability = frontmatter.get("suitability") or {}
+    lines = []
+    if suitability.get("score") is not None:
+        technical = suitability.get("technical") or {}
+        lines.append(f"- **Score:** {int(suitability['score'])}/100")
+        lines.append(f"- **Score-Art:** {SCORE_KIND_SUITABILITY}")
+        detail = f"- **Eignung:** {int(suitability['score'])}/100"
+        if technical.get("score") is not None:
+            detail += f" — fachlich {int(technical['score'])}/100 ({technical.get('decision')})"
+        if suitability.get("recommendation"):
+            detail += f", Empfehlung: {suitability['recommendation']}"
+        lines.append(detail)
+    elif tfidf_100 is not None:
+        lines.append(f"- **Score:** {tfidf_100}/100")
+        lines.append(f"- **Score-Art:** {SCORE_KIND_TFIDF}")
+    if tfidf_100 is not None:
+        similarity = f"- **Textähnlichkeit (TF-IDF):** {tfidf_100}/100"
+        if tfidf_profile:
+            similarity += f" — bestes Profil: {tfidf_profile}"
+        lines.append(similarity)
+    return "\n## Vorbewertung\n\n" + "\n".join(lines) + "\n"
+
+
 def _backfill_scores_for_new_files(output_dir: str, new_count: int) -> int:
     """
-    Schreibt - **Score:** N/100 in neu angelegte Projektdateien, die
+    Schreibt den Abschnitt "Vorbewertung" in neu angelegte Projektdateien, die
     noch keinen Score-Eintrag im Body haben.
     Gibt die Anzahl der beschriebenen Dateien zurück.
     """
@@ -81,23 +123,31 @@ def _backfill_scores_for_new_files(output_dir: str, new_count: int) -> int:
         if _SCORE_LINE_RE.search(content):
             continue  # Bereits gescoret
 
-        title_match = re.search(r"^#\s+(.*)", content, re.MULTILINE)
-        title = title_match.group(1).strip() if title_match else md_path.stem
+        frontmatter = _read_frontmatter(content)
 
-        # Eignungsbewertung aus dem Frontmatter bevorzugen (suitability.score);
-        # ohne sie wie bisher der TF-IDF-Wert des besten Profils.
-        score_100 = _suitability_score_from_frontmatter(content)
-        if score_100 is None:
+        # Textähnlichkeit: gespeicherter TF-IDF-Wert, sonst wie bisher neu berechnet
+        pre_scores = frontmatter.get("pre_scores") or {}
+        tfidf_100 = None
+        tfidf_profile = pre_scores.get("best_profile")
+        if pre_scores.get("best_score") is not None:
+            tfidf_100 = round(float(pre_scores["best_score"]) * 100)
+        else:
+            title_match = re.search(r"^#\s+(.*)", content, re.MULTILINE)
+            title = title_match.group(1).strip() if title_match else md_path.stem
             try:
                 result = scorer.score_project({"title": title, "description": content})
+                tfidf_100 = round((result.best_score or 0.0) * 100)
+                tfidf_profile = result.best_profile
             except Exception:
-                continue
-            score_100 = round((result.best_score or 0.0) * 100)
-        score_line = f"- **Score:** {score_100}/100\n"
+                tfidf_100 = None
+
+        has_suitability = (frontmatter.get("suitability") or {}).get("score") is not None
+        if tfidf_100 is None and not has_suitability:
+            continue
 
         if not content.endswith("\n"):
             content += "\n"
-        content += f"\n## Vorbewertung\n\n{score_line}"
+        content += _score_section(frontmatter, tfidf_100, tfidf_profile)
         md_path.write_text(content, encoding="utf-8")
         scored += 1
 
