@@ -150,6 +150,13 @@ def main() -> None:
     print(f"  RSS-Einträge gefunden    : {summary['total_entries_found']}")
     print(f"  Neue Projekte gespeichert: {new_projects}")
     print(f"  Duplikate übersprungen   : {summary['total_urls_skipped_dedupe']}")
+    print(f"  Fachlich gefiltert       : {summary.get('total_projects_filtered', 0)}")
+    for group_id, group_summary in summary.get('group_summaries', {}).items():
+        print(
+            f"    {group_id:<22}: {group_summary.get('projects_saved', 0)} neu, "
+            f"{group_summary.get('urls_skipped_dedupe', 0)} bekannt, "
+            f"{group_summary.get('projects_filtered', 0)} fachfremd/gefiltert"
+        )
     print(f"  Scores geschrieben       : {scored_count}")
     print(f"  Fehler                   : {summary['total_errors']}")
     if args.dry_run:

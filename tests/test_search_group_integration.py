@@ -92,12 +92,19 @@ def _fake_parse(url: str) -> dict:
         URL_ONLY_AUTOMATION: "Automation-only Projekt",
         URL_ONLY_INFRA: "Infra-only Projekt",
     }
+    # Fachlich passende Beschreibungen: seit der gruppenspezifischen fachlichen
+    # Filterung zählt ein Projekt nur für eine Gruppe, wenn es deren Begriffe trifft.
+    descriptions = {
+        URL_SHARED: "Power Automate Workflows und Microsoft 365 Tenant inkl. Firewall-Konzept.",
+        URL_ONLY_AUTOMATION: "CRM-Einführung mit Power BI Reporting.",
+        URL_ONLY_INFRA: "Sophos Firewall Migration und VLAN-Segmentierung.",
+    }
     return {
         "schema": {
             "title": titles.get(url, "Simuliertes Projekt"),
             "url": url,
             "provider": "freelancermap",
-            "description": "Simulierter Projektinhalt für Tests.",
+            "description": descriptions.get(url, "Simulierter Projektinhalt für Tests."),
             "location": "Remote",
             "rate": None,
             "duration": None,

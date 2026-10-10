@@ -11,6 +11,12 @@
 #
 # Suchgruppen-IDs: automation_bi, infra_security  (Originalbezeichnungen aus
 # search_group_config.py — NICHT umbenennen)
+#
+# Fachliche Filterung: Beide Gruppen lesen denselben ungefilterten Feed. Welche
+# Projekte fachlich zu welcher Gruppe gehören, steht in search_group_filters.yaml
+# (versioniert, wird automatisch geladen). Die `keywords` unten sind rein
+# beschreibend und filtern NICHT. Eigene Begriffe je Gruppe lassen sich hier über
+# `filters.include_terms` setzen; sie haben Vorrang vor search_group_filters.yaml.
 
 search_groups:
 

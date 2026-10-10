@@ -42,6 +42,20 @@ YAML-Konfiguration je Suchgruppe (search_groups.<id>.filters):
         - "ANÜ"
         - "Arbeitnehmerüberlassung"
         - "Vollzeitstelle"
+
+      # Fachliche Einschlusskriterien (Plaintext, case-insensitive, ganze Wörter).
+      # Ein Projekt gehört nur dann zur Suchgruppe, wenn mindestens
+      # include_min_matches verschiedene Begriffe in Titel, Beschreibung oder
+      # Schlagworten vorkommen. Anders als bei den übrigen Filtern gilt hier
+      # NICHT „im Zweifel für das Projekt": kein Treffer → abgelehnt.
+      # Leerzeichen/Bindestrich sind austauschbar ("Power BI" trifft auch
+      # "PowerBI" und "Power-BI"); ein "*" am Ende erlaubt Wortfortsetzungen
+      # ("Firewall*" trifft "Firewalls", "Firewallregeln").
+      include_terms:
+        - "Power BI"
+        - "Make.com"
+        - "Firewall*"
+      include_min_matches: 1
 """
 
 from __future__ import annotations
@@ -193,6 +207,9 @@ class FilterConfig:
     language: Optional[LanguageFilterConfig] = None
     max_age_days: Optional[int] = None
     exclude_terms: List[str] = field(default_factory=list)
+    # Fachliche Einschlusskriterien; leer = keine fachliche Filterung
+    include_terms: List[str] = field(default_factory=list)
+    include_min_matches: int = 1
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "FilterConfig":
@@ -206,7 +223,9 @@ class FilterConfig:
             rate=RateFilterConfig.from_dict(rate_d) if rate_d else None,
             language=LanguageFilterConfig.from_dict(lang_d) if lang_d else None,
             max_age_days=int(d["max_age_days"]) if d.get("max_age_days") is not None else None,
-            exclude_terms=list(d.get("exclude_terms", [])),
+            exclude_terms=list(d.get("exclude_terms") or []),
+            include_terms=[str(t) for t in (d.get("include_terms") or []) if str(t).strip()],
+            include_min_matches=max(1, int(d.get("include_min_matches") or 1)),
         )
 
     @classmethod
@@ -401,6 +420,46 @@ def _detect_languages(text: str) -> List[str]:
     return found
 
 
+_WORD_CHARS = "0-9A-Za-zÄÖÜäöüß"
+
+
+def _compile_include_term(term: str) -> Optional[re.Pattern]:
+    """
+    Übersetzt einen Einschlussbegriff in ein Regex mit Wortgrenzen.
+
+    - Plaintext, kein Regex: Sonderzeichen werden wörtlich genommen ("Make.com").
+    - Leerzeichen und Bindestriche im Begriff sind austauschbar und optional
+      ("Power BI" → "PowerBI", "Power-BI"; "ISO 27001" → "ISO27001").
+    - Der Begriff muss als eigenes Wort beginnen ("API-Integration" trifft
+      nicht "Kapital"); ein abschließendes "*" erlaubt Wortfortsetzungen.
+
+    Returns:
+        Kompiliertes Pattern oder None bei leerem Begriff.
+    """
+    raw = str(term).strip()
+    prefix = raw.endswith("*")
+    core = raw.rstrip("*").strip()
+    parts = [re.escape(p) for p in re.split(r"[\s\-]+", core) if p]
+    if not parts:
+        return None
+    body = r"[\s\-]*".join(parts)
+    tail = "" if prefix else f"(?![{_WORD_CHARS}])"
+    return re.compile(f"(?<![{_WORD_CHARS}]){body}{tail}", re.IGNORECASE)
+
+
+def _schlagworte_text(project_data: Dict[str, Any]) -> str:
+    """Schlagworte/Skills des Projekts als Text (Liste oder String)."""
+    chunks: List[str] = []
+    for key in ("schlagworte", "keywords", "skills", "tags"):
+        value = project_data.get(key)
+        if isinstance(value, (list, tuple, set)):
+            chunks.extend(str(v) for v in value if v)
+        elif value:
+            chunks.append(str(value))
+    return " ; ".join(chunks)
+
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Filter-Engine
 # ──────────────────────────────────────────────────────────────────────────────
@@ -464,6 +523,11 @@ class FilterEngine:
             str(project_data.get("content") or ""),
         ]))
 
+        # ── 0. Fachliche Einschlusskriterien der Suchgruppe ─────────────────
+        if cfg.include_terms:
+            topic_text = " ; ".join(filter(None, [full_text, _schlagworte_text(project_data)]))
+            checks.append(self._check_include_terms(topic_text))
+
         # ── 1. Ausschlussbegriffe ───────────────────────────────────────────
         if cfg.exclude_terms:
             checks.append(self._check_exclude_terms(full_text))
@@ -509,6 +573,37 @@ class FilterEngine:
         return result
 
     # ── Einzelne Filter-Checks ─────────────────────────────────────────────────
+
+    def _check_include_terms(self, text: str) -> FilterCheckResult:
+        """
+        Fachlicher Einschluss: mindestens include_min_matches verschiedene
+        Begriffe müssen vorkommen. Kein Treffer ist kein „unbekannt", sondern
+        eine Ablehnung — sonst würde jedes fachfremde Projekt durchrutschen.
+        """
+        needed = self._cfg.include_min_matches
+        matched: List[str] = []
+        for term in self._cfg.include_terms:
+            pattern = _compile_include_term(term)
+            if pattern is not None and pattern.search(text):
+                matched.append(term)
+
+        passed = len(matched) >= needed
+        if passed:
+            reason = f"Fachlicher Treffer: {', '.join(matched[:8])}"
+        elif matched:
+            reason = (
+                f"Nur {len(matched)} von {needed} nötigen Fachbegriffen gefunden: "
+                f"{', '.join(matched)}"
+            )
+        else:
+            reason = "Kein Fachbegriff der Suchgruppe gefunden"
+        return FilterCheckResult(
+            criterion="include_terms",
+            passed=passed,
+            reason=reason,
+            value_found=matched,
+            was_unknown=False,
+        )
 
     def _check_exclude_terms(self, text: str) -> FilterCheckResult:
         for term in self._cfg.exclude_terms:
