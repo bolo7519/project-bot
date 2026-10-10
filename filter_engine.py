@@ -210,6 +210,10 @@ class FilterConfig:
     # Fachliche Einschlusskriterien; leer = keine fachliche Filterung
     include_terms: List[str] = field(default_factory=list)
     include_min_matches: int = 1
+    # Schwache Fachbegriffe: stehen oft nur beiläufig im Text. Sie erfassen ein
+    # Projekt nur, wenn sie im TITEL stehen oder zusammen mit mindestens einem
+    # weiteren Fachbegriff (stark oder schwach) vorkommen.
+    weak_include_terms: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "FilterConfig":
@@ -226,6 +230,9 @@ class FilterConfig:
             exclude_terms=list(d.get("exclude_terms") or []),
             include_terms=[str(t) for t in (d.get("include_terms") or []) if str(t).strip()],
             include_min_matches=max(1, int(d.get("include_min_matches") or 1)),
+            weak_include_terms=[
+                str(t) for t in (d.get("weak_include_terms") or []) if str(t).strip()
+            ],
         )
 
     @classmethod
@@ -447,6 +454,16 @@ def _compile_include_term(term: str) -> Optional[re.Pattern]:
     return re.compile(f"(?<![{_WORD_CHARS}]){body}{tail}", re.IGNORECASE)
 
 
+def _matching_terms(terms: List[str], text: str) -> List[str]:
+    """Begriffe aus ``terms``, die in ``text`` als eigenes Wort vorkommen."""
+    found: List[str] = []
+    for term in terms or []:
+        pattern = _compile_include_term(term)
+        if pattern is not None and pattern.search(text):
+            found.append(term)
+    return found
+
+
 def _schlagworte_text(project_data: Dict[str, Any]) -> str:
     """Schlagworte/Skills des Projekts als Text (Liste oder String)."""
     chunks: List[str] = []
@@ -524,9 +541,10 @@ class FilterEngine:
         ]))
 
         # ── 0. Fachliche Einschlusskriterien der Suchgruppe ─────────────────
-        if cfg.include_terms:
+        if cfg.include_terms or cfg.weak_include_terms:
             topic_text = " ; ".join(filter(None, [full_text, _schlagworte_text(project_data)]))
-            checks.append(self._check_include_terms(topic_text))
+            checks.append(self._check_include_terms(
+                topic_text, str(project_data.get("title") or "")))
 
         # ── 1. Ausschlussbegriffe ───────────────────────────────────────────
         if cfg.exclude_terms:
@@ -574,28 +592,49 @@ class FilterEngine:
 
     # ── Einzelne Filter-Checks ─────────────────────────────────────────────────
 
-    def _check_include_terms(self, text: str) -> FilterCheckResult:
+    def _check_include_terms(self, text: str, title: str = "") -> FilterCheckResult:
         """
-        Fachlicher Einschluss: mindestens include_min_matches verschiedene
-        Begriffe müssen vorkommen. Kein Treffer ist kein „unbekannt", sondern
-        eine Ablehnung — sonst würde jedes fachfremde Projekt durchrutschen.
+        Fachlicher Einschluss.
+
+        - Starke Begriffe (``include_terms``): mindestens include_min_matches
+          verschiedene Begriffe müssen vorkommen.
+        - Schwache Begriffe (``weak_include_terms``) erfassen nur, wenn sie im
+          Titel stehen oder zusammen mit einem weiteren Fachbegriff vorkommen.
+          Eine einzelne beiläufige Erwähnung im Fließtext genügt nicht.
+
+        Kein Treffer ist kein „unbekannt", sondern eine Ablehnung — sonst würde
+        jedes fachfremde Projekt durchrutschen.
         """
         needed = self._cfg.include_min_matches
-        matched: List[str] = []
-        for term in self._cfg.include_terms:
-            pattern = _compile_include_term(term)
-            if pattern is not None and pattern.search(text):
-                matched.append(term)
+        strong = _matching_terms(self._cfg.include_terms, text)
+        weak = [t for t in _matching_terms(self._cfg.weak_include_terms, text)
+                if t not in strong]
+        weak_in_title = _matching_terms(weak, title) if title else []
+        matched = strong + weak
 
-        passed = len(matched) >= needed
-        if passed:
+        if len(strong) >= needed:
+            passed = True
             reason = f"Fachlicher Treffer: {', '.join(matched[:8])}"
+        elif weak_in_title:
+            passed = True
+            reason = f"Fachbegriff im Titel: {', '.join(weak_in_title[:8])}"
+        elif weak and len(matched) >= max(2, needed):
+            passed = True
+            reason = f"Mehrere Fachbegriffe im Zusammenhang: {', '.join(matched[:8])}"
+        elif weak:
+            passed = False
+            reason = (
+                f"Nur beiläufig erwähnt (nicht im Titel, kein weiterer Fachbegriff): "
+                f"{', '.join(matched)}"
+            )
         elif matched:
+            passed = False
             reason = (
                 f"Nur {len(matched)} von {needed} nötigen Fachbegriffen gefunden: "
                 f"{', '.join(matched)}"
             )
         else:
+            passed = False
             reason = "Kein Fachbegriff der Suchgruppe gefunden"
         return FilterCheckResult(
             criterion="include_terms",

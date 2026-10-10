@@ -38,6 +38,19 @@ suitability:
     high: 50      # ab hier "hoch"
     medium: 25    # ab hier "mittel", darunter "niedrig"
 
+  # Fundstelle eines Begriffs:
+  #   - Steht er nur unter Nice-to-have ("von Vorteil", "wünschenswert"),
+  #     zählt er mit diesem Faktor (15 → 4, 8 → 2 Punkte).
+  nice_to_have_factor: 0.25
+  #   - Steht ein Schwerpunkt im Projekttitel, gibt es einmalig einen Zuschlag.
+  title_bonus:
+    high: 15
+    medium: 8
+  # Höchstens ein fachlicher Treffer und kein Kernthema im Titel: Die fachliche
+  # Eignung bleibt unter "mittel" — eine beiläufig erwähnte Technologie macht
+  # kein passendes Projekt.
+  single_mention_cap: 24
+
   # Höchstwert bei Ablehnung wegen einer nicht belegten Muss-Anforderung
   reject_score_cap: 10
   # Abzug, wenn die Muss-Anforderung nur im Anforderungsabschnitt steht
@@ -152,6 +165,9 @@ suitability:
         - "Vor-Ort-Support"
         - "Client-Rollout*"
         - "Hard- und Software Support"
+        - "Field Service*"
+        - "PC-Rollout*"
+        - "Rollouter*"
         # SOC, Penetration Testing, Red Team, hochspezialisierte Cybersecurity
         - "SOC"
         - "SOC-Analyst*"
@@ -183,7 +199,7 @@ suitability:
     # höchstens einmal vergeben und VOR Spezialisten-Deckel und Muss-Prüfung
     # addiert — er kann also weder einen Deckel noch eine Ablehnung umgehen.
     competency_bonuses:
-      - label: "Power BI mit nachgewiesener Praxis (DAX, Power Query)"
+      - label: "Power BI mit nachgewiesener Praxis (DAX, Power Query, Reporting)"
         requires: ["Power BI"]        # Voraussetzung im Ausschreibungstext
         points_per_skill: 5
         max_points: 10
@@ -191,6 +207,30 @@ suitability:
           - term: "DAX"
             with: ["Power BI", "Power Query", "DAX-Formel*", "DAX-Measure*", "Measure*"]
           - "Power Query"
+          # Reporting-Zusammenhang eines Power-BI-Projekts (Berichte erstellen
+          # und erweitern, Dashboards, Datenanalyse). Zählt wie DAX und Power
+          # Query nur zusammen mit Power BI und in denselben maximal 10 Punkten.
+          - "Reporting"
+          - "Reports"
+          - "Berichte*"
+          - "Dashboard*"
+          - "KPI*"
+          - "Datenanalyse*"
+          - "Datenvisualisierung*"
+
+    # Verlangte Kenntnisse, die der Bewerber nicht bestätigt hat. Sie führen
+    # nicht zur Ablehnung, verhindern aber die Einstufung "hoch": Das Projekt
+    # bleibt bei "Prüfen", bis die Kenntnis geklärt ist. Zählt nicht, wenn der
+    # Begriff nur unter Nice-to-have steht.
+    unconfirmed_requirements:
+      - label: "Nicht bestätigte Power-BI-Plattformkenntnis"
+        requires: ["Power BI"]
+        terms:
+          - "Power BI Premium"
+          - "Premium Capacity"
+          - "Premium-Kapazität*"
+          - "Power BI Embedded"
+          - "Power BI Report Server"
 
     # Nicht belegte Spezialisierungen. Ablehnung nur, wenn Begriff im Titel UND
     # im Muss-Abschnitt; nur im Muss-Abschnitt → Abzug; Erwähnung → nichts.
@@ -211,7 +251,10 @@ suitability:
     # Eignung wird auf `score_cap` begrenzt (keine Ablehnung), wenn
     #   - der Titel eine Spezialistenrolle nennt UND der Anforderungsabschnitt
     #     mindestens eine Spezialerfahrung verlangt, oder
-    #   - der Anforderungsabschnitt mindestens zwei Spezialerfahrungen verlangt.
+    #   - der Anforderungsabschnitt mindestens zwei Spezialerfahrungen verlangt
+    #     (je Regel einstellbar über min_required_without_title).
+    # Nennt der Titel zusätzlich ein belegtes Kernthema (exempt_title_terms),
+    # greift die Regel erst ab min_required_with_exempt_title Anforderungen.
     # Infrastrukturberatung mit Security-Anteil (Firewalls, Segmentierung,
     # Sicherheitskonzepte) ist davon nicht betroffen.
     specialist_roles:
@@ -285,10 +328,126 @@ suitability:
           - "DP-500"
           - "Microsoft Certified*"
 
+      # Reine Softwareentwicklung ist nicht belegt (keine Entwicklerpraxis in
+      # Angular, Java, .NET, Mainframe usw.). Der Deckel liegt unter der
+      # Schwelle "mittel", damit solche Rollen nicht bei "Prüfen" landen.
+      # Ausdrücklich NICHT pauschal betroffen: Power BI, DAX, Power Query,
+      # CRM-Integration und Prozessautomatisierung. Steht eines dieser Themen
+      # im Titel ("Power BI Entwickler", "CRM-Entwickler"), greift der Deckel
+      # nur, wenn mindestens zwei nicht belegte Entwicklungsanforderungen
+      # zwingend verlangt werden (z.B. Plugin-Entwicklung UND C#).
+      - label: "Reine Softwareentwicklerrolle"
+        score_cap: 20
+        min_required_with_title: 1
+        min_required_with_exempt_title: 2
+        min_required_without_title: 3
+        title_terms:
+          - "Developer*"
+          - "Entwickler*"
+          - "Softwareentwickl*"
+          - "Software Engineer*"
+          - "Software-Ingenieur*"
+          - "Programmierer*"
+          - "Fullstack*"
+          - "Full Stack*"
+          - "Backend*"
+          - "Frontend*"
+          - "Mainframe*"
+        exempt_title_terms:
+          - "Power BI"
+          - "Power Query"
+          - "DAX"
+          - "CRM"
+          - "Salesforce"
+          - "Bitrix24"
+          - "Make.com"
+          - "Zapier"
+          - "Prozessautomatisierung"
+          - "Workflow-Automatisierung"
+          - "SharePoint"
+        required_experience_terms:
+          - "Angular"
+          - "React"
+          - "Vue.js"
+          - "TypeScript"
+          - "JavaScript"
+          - "Java"
+          - "Spring Boot"
+          - "Kotlin"
+          - "Swift"
+          - "C#"
+          - ".NET"
+          - "C++"
+          - "Blazor"
+          - "Python"
+          - "PHP"
+          - "Node.js"
+          - "Scala"
+          - "Cobol"
+          - "CICS"
+          - "JCL"
+          - "ADABAS"
+          - "PL/SQL"
+          - "ABAP"
+          - "Apex"
+          - "VBA"
+          - "Microservices"
+          - "Camunda"
+          - "Lotus Notes"
+          - "Plugin*"
+          - "Script Includes"
+          - "ServiceNow-Entwicklung"
+          - "Programmiererfahrung"
+          - "Entwicklungserfahrung"
+          - "Erfahrung in der Entwicklung"
+          - "Erfahrung in der Softwareentwicklung"
+          - "Erfahrung als Entwickler*"
+
   # Rahmenbedingungen — getrennt von der fachlichen Eignung ───────────────────
   # Jede Angabe erhält einen Status: erfüllt / teilweise / nicht erfüllt /
   # unbekannt. Fehlende Angaben gelten als "unbekannt", nie als erfüllt.
   conditions:
+    # Vertragsart: Gesucht sind Freelance-Projekte. Festanstellung und
+    # Anbieterwerbung (ein Anbieter sucht selbst Kunden oder Partner) sind
+    # keine Projekte → "Nicht bewerben". Personalverleih/ANÜ → "teilweise".
+    # Ohne Angabe bleibt die Vertragsart "unbekannt".
+    contract_type:
+      freelance:
+        # Ausgeschrieben statt "Freelance*": Der Plattformname "freelancermap"
+        # in einer URL ist keine Angabe zur Vertragsart.
+        - "Freelance"
+        - "Freelancer"
+        - "Freelancerin"
+        - "Freelancer:in"
+        - "Freelancing"
+        - "Freelance-Projekt*"
+        - "freiberuflich*"
+        - "Freiberufler*"
+        - "Contractor*"
+        - "selbstständig*"
+        - "selbständig*"
+      employment:
+        - "Festanstellung*"
+        - "Arbeitsvertrag"
+        - "Jahresgehalt"
+        - "Bruttojahresgehalt"
+        - "Ihr Gehalt"
+        - "Direktvermittlung"
+        - "permanent position"
+      temporary_employment:
+        - "Personalverleih"
+        - "Arbeitnehmerüberlassung"
+        - "ANÜ"
+        - "AÜG"
+        - "Temporäranstellung"
+        - "Payrolling"
+      advertisement_title:
+        - "Pilotkunde*"
+        - "Referenzkunde*"
+        - "Kunden gesucht"
+        - "Vermittlungspartner*"
+        - "Vertriebspartner*"
+        - "Sonderkonditionen"
     work_mode:               # Remote bevorzugt
       onsite_only:
         - "kein Remote"
@@ -302,6 +461,10 @@ suitability:
         - "anteilig vor Ort"
         - "teilweise vor Ort"
         - "teilweise remote"
+        - "anteilig remote"
+        - "Remote-Anteil"
+        - "Remoteanteil"
+        - "Homeoffice-Anteil"
       remote:
         - "Remote"
         - "Homeoffice"
@@ -314,6 +477,7 @@ suitability:
     score_adjustments:
       onsite_only: -20
       workload_outside: -10
+      not_freelance: -20
 
   # Verfügbarkeit des Bewerbers. null = nicht konfiguriert: der Starttermin
   # wird dann nur angezeigt, nicht geprüft, und es gibt keinen Abzug.
