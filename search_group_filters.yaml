@@ -199,7 +199,10 @@ search_group_filters:
 # vor, gilt der Eintrag als fachfremd, ohne dass die Projektseite geladen wird.
 # Sobald ein Fachbegriff im RSS-Text steht, wird die Seite wie gewohnt geladen.
 #
-# Bewusst kurz und auf eindeutig IT-fremde Berufe beschränkt. Eine leere Liste
+# Zunächst konservativ: nur Berufsbezeichnungen aus Medizin/Pflege,
+# Buchhaltung, Recruiting, Grafik/Übersetzung und Handwerk. Projektleiter-,
+# Manager- und Ingenieurstitel stehen bewusst NICHT hier, auch wenn sie
+# fachfremd wirken — dort entscheidet weiterhin der Text der Projektseite. Eine leere Liste
 # schaltet den Vorfilter ab; dann wird jede neue Projektseite einmal geladen.
 # In config.yaml lässt sich die Liste über `rss_prefilter.title_exclude_terms`
 # überschreiben.
@@ -227,8 +230,3 @@ rss_prefilter:
     - "Elektriker*"
     - "Elektroniker*"
     - "Mechatroniker*"
-    - "Schaltschrankbau*"
-    - "Spritzguss*"
-    - "Bauleiter*"
-    - "Bauingenieur*"
-    - "Baumanager*"

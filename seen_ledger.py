@@ -15,7 +15,7 @@ Datei: ``{output_dir}/rss_seen_ledger.json``
           "provider": "freelancermap", "feed": "DE",
           "first_seen": "...", "last_seen": "...",
           "status": "captured" | "filtered" | "existing" | "error",
-          "basis":  "page" | "rss_title" | "existing",
+          "basis":  "page" | "rss_title" | "existing" | "file",
           "groups": {"<group_id>": {"decision": "captured" | "filtered" | "existing",
                                     "terms": "<Hash der Filterregeln>"}},
           "errors": 0, "last_error": null
@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Tuple
@@ -55,6 +56,7 @@ STATUS_ERROR = "error"
 BASIS_PAGE = "page"
 BASIS_RSS_TITLE = "rss_title"
 BASIS_EXISTING = "existing"
+BASIS_FILE = "file"              # anhand der gespeicherten Projektdatei entschieden
 
 _SUMMARY_MAX_CHARS = 600
 
@@ -66,6 +68,8 @@ class SeenLedger:
         self.path = Path(output_dir) / LEDGER_FILENAME
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._dirty = False
+        self._changed: set = set()     # in diesem Lauf geänderte Schlüssel
+        self._removed: set = set()     # in diesem Lauf entfernte Schlüssel
         self._load()
 
     # ── Laden / Speichern ──────────────────────────────────────────────────────
@@ -92,19 +96,52 @@ class SeenLedger:
                 "Seen-Ledger nicht lesbar (%s) — starte leer, Kopie: %s", exc, backup)
             self._entries = {}
 
+    def _read_disk(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                entries = json.load(fh).get("entries")
+            return entries if isinstance(entries, dict) else {}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
     def save(self) -> None:
-        """Schreibt das Ledger atomar; ohne Änderungen passiert nichts."""
+        """
+        Schreibt das Ledger atomar; ohne Änderungen passiert nichts.
+
+        Vor dem Schreiben wird der Stand auf der Platte übernommen und nur um die
+        eigenen Änderungen ergänzt. Läuft ausnahmsweise ein zweiter Abruf
+        gleichzeitig, gehen dessen Einträge so nicht verloren.
+        """
         if not self._dirty:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(
-                {"version": LEDGER_VERSION, "entries": self._entries},
-                fh, ensure_ascii=False, indent=1, sort_keys=True,
-            )
-        os.replace(tmp, self.path)
+        merged = self._read_disk()
+        for key in self._changed:
+            if key in self._entries:
+                merged[key] = self._entries[key]
+        for key in self._removed:
+            merged.pop(key, None)
+        self._entries = merged
+
+        # eigene temporäre Datei je Prozess und Thread, dann atomar umbenennen
+        tmp = self.path.with_name(
+            f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {"version": LEDGER_VERSION, "entries": merged},
+                    fh, ensure_ascii=False, indent=1, sort_keys=True,
+                )
+            os.replace(tmp, self.path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
         self._dirty = False
+        self._changed.clear()
+        self._removed.clear()
 
     # ── Lesen ──────────────────────────────────────────────────────────────────
 
@@ -159,7 +196,7 @@ class SeenLedger:
         record["title"] = title
         record["summary"] = (summary or "")[:_SUMMARY_MAX_CHARS]
         record["last_seen"] = now
-        self._dirty = True
+        self._mark(key)
         return record
 
     def record_decisions(self, key: str, decisions: Dict[str, str], terms: Dict[str, str],
@@ -178,7 +215,7 @@ class SeenLedger:
             record["status"] = DECISION_FILTERED
         record["basis"] = basis
         record["last_error"] = None
-        self._dirty = True
+        self._mark(key)
 
     def record_error(self, key: str, error: str) -> None:
         """
@@ -190,7 +227,7 @@ class SeenLedger:
         record["last_error"] = str(error)[:300]
         if not record.get("groups"):
             record["status"] = STATUS_ERROR
-        self._dirty = True
+        self._mark(key)
 
     def prune(self, max_age_days: int = 120) -> int:
         """Entfernt Einträge, die seit ``max_age_days`` nicht mehr im Feed standen."""
@@ -198,6 +235,13 @@ class SeenLedger:
         old = [k for k, r in self._entries.items() if str(r.get("last_seen") or "") < cutoff]
         for key in old:
             del self._entries[key]
+            self._changed.discard(key)
+            self._removed.add(key)
         if old:
             self._dirty = True
         return len(old)
+
+    def _mark(self, key: str) -> None:
+        self._changed.add(key)
+        self._removed.discard(key)
+        self._dirty = True

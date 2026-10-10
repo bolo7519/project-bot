@@ -35,7 +35,7 @@ from filter_engine import FilterEngine, _compile_include_term, filter_config_fro
 from project_record import _canonical_url, _make_project_id
 from search_group_config import load_rss_prefilter
 from seen_ledger import (
-    BASIS_EXISTING, BASIS_PAGE, BASIS_RSS_TITLE,
+    BASIS_EXISTING, BASIS_FILE, BASIS_PAGE, BASIS_RSS_TITLE,
     DECISION_CAPTURED, DECISION_EXISTING, DECISION_FILTERED,
     SeenLedger,
 )
@@ -233,22 +233,30 @@ class SharedFeedRun:
         if not pending:
             return CLASS_KNOWN if any_captured else CLASS_FILTERED
 
-        # 2. Projekt schon vor dem Ledger bekannt → nicht anfassen, nicht laden.
-        if not record.get("groups"):
-            project_id = _make_project_id(provider_url=url, title=title or None)
-            if self.dedupe.already_processed_by_id(project_id):
-                self.ledger.record_decisions(
-                    key, {g: DECISION_EXISTING for g in pending}, self.terms, BASIS_EXISTING)
-                for group_id in pending:
-                    self._count(group_id, provider_id, "urls_skipped_dedupe")
-                return CLASS_KNOWN
-
+        # 2. Bekannte URL? Dann wird die Projektseite nie erneut abgerufen.
+        project_id = _make_project_id(provider_url=url, title=title or None)
+        known = self.dedupe.already_processed_by_id(project_id)
         discovered_at = datetime.now().isoformat()
+        schema: Optional[Dict[str, Any]] = None
+        basis = BASIS_PAGE
+
+        if known and not record.get("groups"):
+            # Schon vor dem Ledger bekannt → nicht anfassen.
+            self.ledger.record_decisions(
+                key, {g: DECISION_EXISTING for g in pending}, self.terms, BASIS_EXISTING)
+            for group_id in pending:
+                self._count(group_id, provider_id, "urls_skipped_dedupe")
+            return CLASS_KNOWN
+        if known:
+            # Von dieser Pipeline angelegt, aber für eine Gruppe noch offen
+            # (z.B. nach geänderten Suchbegriffen): gespeicherten Text prüfen.
+            schema = self._schema_from_existing_file(project_id, title)
+            basis = BASIS_FILE
 
         # 3. Reichen die RSS-Daten? Nur für ein sicheres Nein: klar fachfremder
         #    Titel und kein einziger Fachbegriff einer offenen Gruppe im RSS-Text.
         rss_text = f"{title} ; {summary}"
-        excluded_by = _any_term(self.title_exclude_terms, title)
+        excluded_by = None if known else _any_term(self.title_exclude_terms, title)
         if excluded_by and not any(
             _any_term(self.include_terms[g], rss_text) for g in pending
         ):
@@ -272,24 +280,32 @@ class SharedFeedRun:
                 key, {g: DECISION_FILTERED for g in pending}, self.terms, BASIS_RSS_TITLE)
             return CLASS_KNOWN if any_captured else CLASS_FILTERED
 
-        # 4. Projektseite abrufen — höchstens einmal je Eintrag, gedeckelt je Lauf.
-        if self.max_page_requests is not None and self.page_requests >= self.max_page_requests:
-            return CLASS_DEFERRED
-        if self.page_delay and self.page_requests:
-            time.sleep(self.page_delay)
-        self.page_requests += 1
-        self._feed(label)["page_requests"] += 1
-        try:
-            parse_result = self._adapter(provider_id).parse(url)
-            schema = (
-                parse_result["schema"]
-                if isinstance(parse_result, dict) and "schema" in parse_result
-                else parse_result
-            )
-            if not isinstance(schema, dict):
-                raise ValueError("Projektseite lieferte keine auswertbaren Daten")
-        except Exception as exc:
-            return self._entry_failed(key, url, provider_id, pending, exc)
+        # 4. Projektseite abrufen — nur für unbekannte URLs, höchstens einmal je
+        #    Eintrag und gedeckelt je Lauf.
+        if schema is None:
+            if known:
+                # Bekannt, aber Datei nicht lesbar: lieber offen lassen als laden.
+                return self._entry_failed(
+                    key, url, provider_id, pending,
+                    FileNotFoundError("Projektdatei zur bekannten URL nicht gefunden"))
+            if (self.max_page_requests is not None
+                    and self.page_requests >= self.max_page_requests):
+                return CLASS_DEFERRED
+            if self.page_delay and self.page_requests:
+                time.sleep(self.page_delay)
+            self.page_requests += 1
+            self._feed(label)["page_requests"] += 1
+            try:
+                parse_result = self._adapter(provider_id).parse(url)
+                schema = (
+                    parse_result["schema"]
+                    if isinstance(parse_result, dict) and "schema" in parse_result
+                    else parse_result
+                )
+                if not isinstance(schema, dict):
+                    raise ValueError("Projektseite lieferte keine auswertbaren Daten")
+            except Exception as exc:
+                return self._entry_failed(key, url, provider_id, pending, exc)
 
         # 5. Gegen alle offenen Gruppen prüfen
         decisions: Dict[str, str] = {}
@@ -315,16 +331,35 @@ class SharedFeedRun:
             except Exception as exc:
                 # Schon gelungene Entscheidungen behalten, der Rest wird wiederholt.
                 if decisions:
-                    self.ledger.record_decisions(key, decisions, self.terms, BASIS_PAGE)
+                    self.ledger.record_decisions(key, decisions, self.terms, basis)
                 return self._entry_failed(key, url, provider_id,
                                           [g for g in pending if g not in decisions], exc)
 
-        self.ledger.record_decisions(key, decisions, self.terms, BASIS_PAGE)
+        self.ledger.record_decisions(key, decisions, self.terms, basis)
         if created:
             return CLASS_NEW
         if any_captured or DECISION_CAPTURED in decisions.values():
             return CLASS_KNOWN
         return CLASS_FILTERED
+
+    def _schema_from_existing_file(self, project_id: str, title: str) -> Optional[Dict[str, Any]]:
+        """
+        Liest Titel und Ausschreibungstext aus der vorhandenen Projektdatei.
+
+        Angehängte Bewertungsabschnitte werden abgeschnitten, damit z.B. der
+        Profilname "power_bi_sharepoint" keinen Fachtreffer auslöst.
+        """
+        try:
+            path = self.dispatcher._find_existing_file(project_id)
+            if not path:
+                return None
+            frontmatter, body = self._state_manager_cls(self.output_dir).read_project(path)
+            for marker in ("## Vorbewertung", "## 🤖 AI Evaluation Results"):
+                body = body.split(marker, 1)[0]
+            return {"title": frontmatter.get("title") or title, "description": body}
+        except Exception as exc:
+            logger.warning("Projektdatei zu %s nicht lesbar: %s", project_id, exc)
+            return None
 
     def _dispatch(self, url: str, title: str, schema: Dict[str, Any], provider_id: str,
                   passing: List[Tuple[str, Dict[str, Any]]], decisions: Dict[str, str],

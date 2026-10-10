@@ -24,6 +24,67 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from pytz import timezone
 
+# Standard-Cron zählt Wochentage 0=Sonntag … 6=Samstag (7=Sonntag).
+# APScheduler zählt 0=Montag … 6=Sonntag: "1-5" liefe dort Dienstag–Samstag.
+_CRON_WEEKDAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+
+def normalize_cron_weekdays(cron_expr: str) -> str:
+    """
+    Übersetzt numerische Wochentage eines 5-Felder-Cron-Ausdrucks in Namen,
+    damit APScheduler sie wie Standard-Cron versteht.
+
+    "0 9 * * 1-5" → "0 9 * * mon,tue,wed,thu,fri"
+    "0 10 * * 0,6" → "0 10 * * sun,sat"
+
+    Namen ("mon-fri") und "*" bleiben unverändert.
+    Ungültige Zahlen bleiben stehen, damit die Validierung sie wie bisher meldet.
+    """
+    fields = cron_expr.split()
+    if len(fields) != 5:
+        return cron_expr
+
+    def convert(part: str) -> str:
+        base, _, step = part.partition("/")
+        if base == "*" and step.isdigit():
+            base = "0-6"                     # "*/2" = So, Di, Do, Sa wie in Cron
+        if not base or base == "*":
+            return part
+        start, dash, end = base.partition("-")
+        if not start.isdigit() or (dash and not end.isdigit()):
+            return part                      # Namen oder Unbekanntes: unverändert
+        first = int(start)
+        last = int(end) if dash else first
+        if first > 7 or last > 7:
+            return part
+        if not dash and not step:
+            return _CRON_WEEKDAY_NAMES[first % 7]
+        if dash and first > last:
+            return part
+        if not dash:
+            last = 6                         # "3/2" = ab Mittwoch jeden zweiten Tag
+        stride = int(step) if step.isdigit() and int(step) > 0 else 1
+        days = []
+        for number in range(first, last + 1, stride):
+            name = _CRON_WEEKDAY_NAMES[number % 7]
+            if name not in days:
+                days.append(name)
+        return ",".join(days)
+
+    fields[4] = ",".join(convert(part) for part in fields[4].split(","))
+    return " ".join(fields)
+
+
+def build_cron_trigger(cron_expr: str, tz=None) -> CronTrigger:
+    """CronTrigger aus einem Standard-Cron-Ausdruck (Wochentage 0/7=Sonntag)."""
+    # Strip stray surrounding quotes that may have been written to
+    # schedules.json (e.g. "\"0 9 * * 1-5\"" → "0 9 * * 1-5")
+    normalized = cron_expr.strip().strip('"').strip("'")
+    normalized = normalize_cron_weekdays(normalized)
+    if tz is None:
+        return CronTrigger.from_crontab(normalized)
+    return CronTrigger.from_crontab(normalized, timezone=tz)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -410,14 +471,9 @@ class SchedulerManager:
             if self.scheduler.get_job(job_id):
                 self.scheduler.remove_job(job_id)
 
-            # Create trigger
-            # Strip stray surrounding quotes that may have been written to
-            # schedules.json (e.g. "\"0 9 * * 1-5\"" → "0 9 * * 1-5")
-            cron_expr = schedule.cron_schedule.strip().strip('"').strip("'")
-            trigger = CronTrigger.from_crontab(
-                cron_expr,
-                timezone=timezone(schedule.timezone)
-            )
+            # Create trigger (Wochentage nach Standard-Cron, siehe build_cron_trigger)
+            trigger = build_cron_trigger(
+                schedule.cron_schedule, timezone(schedule.timezone))
 
             # Add job
             self.scheduler.add_job(
@@ -565,10 +621,8 @@ class SchedulerManager:
     def _validate_cron_schedule(self, cron_expr: str, result: ValidationResult):
         """Validate cron schedule syntax"""
         try:
-            from apscheduler.triggers.cron import CronTrigger
-            # Strip stray surrounding quotes (same normalisation as _add_schedule_to_scheduler)
-            normalized = cron_expr.strip().strip('"').strip("'")
-            CronTrigger.from_crontab(normalized)
+            # Gleiche Normalisierung wie in _add_schedule_to_scheduler
+            build_cron_trigger(cron_expr)
             result.add_success("Cron schedule syntax is valid")
         except Exception as e:
             result.add_error(f"Invalid cron schedule '{cron_expr}': {e}")

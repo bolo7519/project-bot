@@ -185,14 +185,22 @@ class TestConfiguration:
             assert rss["limit"] == 25
             assert [u.split("/")[-1].split(".")[0] for u in rss["feed_urls"]] == ["de", "at", "ch"]
 
-    def test_prefilter_terms_are_configured_and_narrow(self):
+    def test_prefilter_terms_are_configured_and_conservative(self):
         terms = load_rss_prefilter()["title_exclude_terms"]
         assert "Assistenzarzt*" in terms
-        # keine IT-nahen Rollen im Vorfilter
+        # nur Berufsbezeichnungen; keine IT-nahen, Leitungs- oder Ingenieurstitel
         lowered = " ".join(terms).lower()
-        for it_term in ("entwickler", "consultant", "berater", "admin", "controller",
-                        "projektleiter", "manager*", "architekt", "support"):
-            assert it_term not in lowered.replace("baumanager*", ""), it_term
+        for other in ("entwickler", "consultant", "berater", "admin", "controller",
+                      "projektleiter", "manager", "architekt", "support", "ingenieur",
+                      "bauleiter", "spritzguss", "schaltschrank"):
+            assert other not in lowered, other
+
+    def test_prefilter_can_be_overridden_in_config(self, tmp_path):
+        harness = Harness(tmp_path)
+        harness.config["rss_prefilter"] = {"title_exclude_terms": ["Java Entwickler"]}
+        harness.run()
+        assert "java-entwickler" not in harness.page_calls
+        assert "assistenzarzt" in harness.page_calls
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -323,6 +331,8 @@ class TestAssignment:
         assert harness.files()["m365-sharepoint"]["search_groups"] == [A]
         harness.run(group_ids=[B])
         assert sorted(harness.files()["m365-sharepoint"]["search_groups"]) == [A, B]
+        # die bekannte URL wurde dafür nicht noch einmal abgerufen
+        assert harness.page_calls.count("m365-sharepoint") == 1
         assert len([p for p in harness.out.glob("*.md")]) == 6
 
 
@@ -375,6 +385,29 @@ class TestSeenLedger:
         assert len(list(harness.out.glob("*.md"))) == 6
         # bekannte Projekte werden nicht erneut geladen, nur die zuvor gefilterten
         assert sorted(harness.page_calls) == ["java-entwickler"]
+
+    def test_parallel_writers_do_not_lose_each_others_entries(self, tmp_path):
+        first, second = SeenLedger(str(tmp_path)), SeenLedger(str(tmp_path))
+        first.touch("a", url="a", title="", summary="", provider="p", feed="DE")
+        second.touch("b", url="b", title="", summary="", provider="p", feed="AT")
+        first.save()
+        second.save()
+        assert set(dict(SeenLedger(str(tmp_path)).items())) == {"a", "b"}
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_failed_write_keeps_previous_ledger_intact(self, tmp_path):
+        ledger = SeenLedger(str(tmp_path))
+        ledger.touch("a", url="a", title="", summary="", provider="p", feed="DE")
+        ledger.save()
+        before = (tmp_path / LEDGER_FILENAME).read_text("utf-8")
+        ledger.touch("b", url="b", title="", summary="", provider="p", feed="DE")
+        with patch("seen_ledger.os.replace", side_effect=OSError("kein Platz")):
+            with pytest.raises(OSError):
+                ledger.save()
+        assert (tmp_path / LEDGER_FILENAME).read_text("utf-8") == before
+        assert not list(tmp_path.glob("*.tmp"))
+        ledger.save()                                   # Wiederholung gelingt
+        assert set(dict(SeenLedger(str(tmp_path)).items())) == {"a", "b"}
 
     def test_unchanged_ledger_is_not_rewritten(self, tmp_path):
         ledger = SeenLedger(str(tmp_path))
@@ -593,10 +626,11 @@ class TestReevaluation:
         self._add_java_term(harness)
         summary = harness.run()
 
-        # nur die zuvor für Gruppe A abgelehnten Einträge werden neu geladen;
-        # erfasste Projekte und der RSS-gefilterte Eintrag kosten keinen Abruf
-        assert sorted(harness.page_calls) == [
-            "firewall-sophos", "java-entwickler", "wien-netzwerk"]
+        # nur der unbekannte, zuvor abgelehnte Eintrag wird geladen. Projekte mit
+        # Datei (firewall-sophos, wien-netzwerk: für Gruppe A abgelehnt) werden
+        # anhand der gespeicherten Datei geprüft, ohne Seitenabruf.
+        assert harness.page_calls == ["java-entwickler"]
+        assert harness.files()["firewall-sophos"]["search_groups"] == [B]
         assert harness.files()["java-entwickler"]["search_groups"] == [A]
         assert summary["total_projects_saved"] == 1
         assert len(list(harness.out.glob("*.md"))) == 7
@@ -624,8 +658,73 @@ class TestReevaluation:
 
     def test_reevaluation_respects_page_request_cap(self, harness):
         harness.run()
-        self._add_java_term(harness)
+        # Vorfilter abschalten: Regeln ändern sich für beide Gruppen, die zwei
+        # Einträge ohne Projektdatei müssten neu geladen werden
+        harness.config["rss_prefilter"] = {"title_exclude_terms": []}
         harness.page_calls.clear()
         summary = harness.run(max_page_requests=1)
         assert len(harness.page_calls) == 1
-        assert summary["page_requests_deferred"] == 2
+        assert summary["page_requests_deferred"] == 1
+        harness.run(max_page_requests=1)
+        assert sorted(harness.page_calls) == ["assistenzarzt", "java-entwickler"]
+
+    def test_known_project_gains_group_from_stored_file_without_request(self, harness):
+        """Neuer Fachbegriff passt auf ein von der Pipeline angelegtes Projekt."""
+        harness.run()
+        assert harness.files()["firewall-sophos"]["search_groups"] == [B]
+        from search_group_config import apply_default_topic_filters
+        merged = apply_default_topic_filters(copy.deepcopy(harness.config))
+        terms = merged["search_groups"][A]["filters"]["include_terms"] + ["drei Standorten"]
+        harness.config["search_groups"][A]["filters"] = {"include_terms": terms}
+        harness.page_calls.clear()
+
+        harness.run()
+
+        # geladen wird nur der unbekannte, zuvor für A abgelehnte Eintrag
+        assert harness.page_calls == ["java-entwickler"]
+        assert sorted(harness.files()["firewall-sophos"]["search_groups"]) == [A, B]
+        ledger = {k.split("/")[-1]: v for k, v in harness.ledger().items()}
+        assert ledger["firewall-sophos"]["basis"] == "file"
+
+    def test_score_section_of_stored_file_does_not_cause_a_match(self, harness):
+        """Der angehängte Profilname "power_bi_sharepoint" ist kein Fachtreffer."""
+        harness.run()
+        path = next(p for p in harness.out.glob("*.md") if "Firewall" in p.name)
+        path.write_text(path.read_text("utf-8") + (
+            "\n## Vorbewertung\n\n- **Score:** 10/100\n"
+            "- **Textähnlichkeit (TF-IDF):** 10/100 — bestes Profil: power_bi_sharepoint\n"),
+            "utf-8")
+        # Regeländerung ohne inhaltlichen Bezug erzwingt die Neubewertung
+        harness.config["rss_prefilter"] = {"title_exclude_terms": ["Unbeteiligt"]}
+        harness.run()
+        assert harness.files()["firewall-sophos"]["search_groups"] == [B]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9 — Bekannte URLs werden vor dem Seitenabruf erkannt
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestKnownUrlsAreNeverFetched:
+
+    def test_no_known_url_is_requested_in_any_later_run(self, harness):
+        harness.run()
+        known = set(harness.files())
+        harness.page_calls.clear()
+
+        harness.run()                                                  # Wiederholung
+        harness.run(group_ids=[B])                                     # einzelne Gruppe
+        harness.config["rss_prefilter"] = {"title_exclude_terms": []}  # Regeländerung
+        harness.run()
+        harness.run(reevaluate_filtered=True)                          # Neubewertung
+
+        assert not (set(harness.page_calls) & known)
+
+    def test_known_url_with_missing_file_is_not_fetched_but_reported(self, harness):
+        harness.run()
+        next(p for p in harness.out.glob("*.md") if "Firewall" in p.name).rename(
+            harness.out / "verschoben.txt")
+        harness.config["rss_prefilter"] = {"title_exclude_terms": ["Unbeteiligt"]}
+        harness.page_calls.clear()
+        summary = harness.run()
+        assert "firewall-sophos" not in harness.page_calls
+        assert summary["total_errors"] == 1
