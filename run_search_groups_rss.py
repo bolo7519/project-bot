@@ -179,6 +179,24 @@ def main() -> None:
         default="projects",
         help="Projektverzeichnis (default: projects)",
     )
+    parser.add_argument(
+        "--page-delay",
+        type=float,
+        default=0.5,
+        help="Pause in Sekunden zwischen zwei Projektseiten-Abrufen (default: 0.5)",
+    )
+    parser.add_argument(
+        "--max-page-requests",
+        type=int,
+        default=None,
+        help="Obergrenze der Projektseiten-Abrufe je Lauf (default: 60)",
+    )
+    parser.add_argument(
+        "--reevaluate-filtered",
+        action="store_true",
+        help="Nach geänderten Suchbegriffen auch früher gefilterte Einträge neu "
+             "bewerten, die nicht mehr im Feed stehen",
+    )
     args = parser.parse_args()
 
     config = load_application_config(args.config)
@@ -201,6 +219,9 @@ def main() -> None:
         output_dir=args.output_dir,
         dry_run=args.dry_run,
         group_ids=args.groups,
+        page_delay=args.page_delay,
+        max_page_requests=args.max_page_requests,
+        reevaluate_filtered=args.reevaluate_filtered,
     )
 
     print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
@@ -228,6 +249,18 @@ def main() -> None:
             f"{group_summary.get('projects_unsuitable', 0)} wegen Muss-Anforderung abgelehnt"
         )
     print(f"  Scores geschrieben       : {scored_count}")
+    print(f"  HTTP: Feed-Abrufe        : {summary.get('feed_requests', 0)}")
+    print(f"  HTTP: Projektseiten      : {summary.get('page_requests', 0)}"
+          f" (zurückgestellt: {summary.get('page_requests_deferred', 0)})")
+    for label, feed in summary.get('feed_summaries', {}).items():
+        print(
+            f"    Feed {label:<13}: {feed.get('entries', 0)} Einträge — "
+            f"{feed.get('new', 0)} neu, {feed.get('known', 0)} bekannt, "
+            f"{feed.get('filtered', 0)} fachlich gefiltert, "
+            f"{feed.get('errors', 0)} fehlerhaft, "
+            f"{feed.get('deferred', 0)} zurückgestellt, "
+            f"{feed.get('page_requests', 0)} Seitenabrufe"
+        )
     print(f"  Fehler                   : {summary['total_errors']}")
     if args.dry_run:
         print("  (DRY-RUN — keine Dateien geändert)")

@@ -56,7 +56,9 @@ search_groups:
             # Personalisierte Feed-URL — muss mit providers.freelancermap.channels.rss.feed_urls übereinstimmen
             feed_urls:
               - "https://www.freelancermap.de/feeds/projekte/de.xml?p=kbZGfgs2Gz6KrSGjCgRb"
-            limit: 20
+              - "https://www.freelancermap.de/feeds/projekte/at.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+              - "https://www.freelancermap.de/feeds/projekte/ch.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+            limit: 25
             max_age_days: 7
     schedule:
       rss_interval_minutes: 120
@@ -96,7 +98,9 @@ search_groups:
           rss:
             feed_urls:
               - "https://www.freelancermap.de/feeds/projekte/de.xml?p=kbZGfgs2Gz6KrSGjCgRb"
-            limit: 20
+              - "https://www.freelancermap.de/feeds/projekte/at.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+              - "https://www.freelancermap.de/feeds/projekte/ch.xml?p=kbZGfgs2Gz6KrSGjCgRb"
+            limit: 25
             max_age_days: 7
     schedule:
       rss_interval_minutes: 120

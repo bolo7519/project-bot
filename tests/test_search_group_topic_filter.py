@@ -410,7 +410,9 @@ def _run_pipeline(output_dir: str) -> dict:
     entries = [{"link": url, "title": v[1]} for url, v in SAMPLE_BY_URL.items()]
 
     with (
-        patch("email_agent.EmailAgent.fetch_rss_feed", return_value=entries),
+        # Die Beispielprojekte stehen im Deutschland-Feed; AT und CH sind leer.
+        patch("email_agent.EmailAgent.fetch_rss_feed",
+              side_effect=lambda url, *a, **k: entries if "/de.xml" in url else []),
         patch("email_agent.EmailAgent.load_adapter") as mock_load_adapter,
         patch("email_agent.MarkdownRenderer") as mock_renderer_cls,
     ):
@@ -488,7 +490,9 @@ class TestPipelineEndToEnd:
         ]
         assert len(lines) == 20
         for entry in lines:
-            assert entry["filter_result"]["failed_criteria"] == ["include_terms"]
+            # entweder nach Abruf der Projektseite oder schon anhand des RSS-Titels
+            assert entry["filter_result"]["failed_criteria"] in (
+                ["include_terms"], ["rss_title_prefilter"])
         rejected = {(e["search_group_id"], e["provider_url"]) for e in lines}
         for url, (expected, _title, _d, _t) in SAMPLE_BY_URL.items():
             for gid in (GROUP_A, GROUP_B):
